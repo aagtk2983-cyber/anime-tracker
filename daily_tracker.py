@@ -1,49 +1,61 @@
+import json
 import re
-import requests
-import pandas as pd
-from bs4 import BeautifulSoup
 from pathlib import Path
 from datetime import datetime
 
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+
 URL = "https://myanimelist.net/anime/49233/Youjo_Senki_II"
 
-CSV_FILE = Path("youjo_senki_ii.csv")
+CSV = Path("data/history.csv")
 
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 "
-        "(Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 "
-        "(KHTML, like Gecko) "
-        "Chrome/137.0 Safari/537.36"
-    )
+    "User-Agent": "Mozilla/5.0"
 }
 
 
 def fetch():
 
-    response = requests.get(URL, headers=HEADERS, timeout=20)
-    response.raise_for_status()
+    r = requests.get(URL, headers=HEADERS, timeout=20)
+    r.raise_for_status()
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    # JSON-LDを探す
+    for script in soup.find_all("script", type="application/ld+json"):
+
+        try:
+            data = json.loads(script.string)
+
+            if data.get("@type") == "TVSeries":
+
+                score = float(data["aggregateRating"]["ratingValue"])
+
+                break
+
+        except Exception:
+            pass
+
+    else:
+        raise Exception("Score取得失敗")
+
     text = soup.get_text(" ")
 
-    score = re.search(r"Score\s*([0-9.]+)", text)
-    members = re.search(r"Members\s*([\d,]+)", text)
+    m = re.search(r"Members\s*([\d,]+)", text)
 
-    if score is None:
-        raise Exception("Scoreが取得できません。")
+    if m is None:
+        raise Exception("Members取得失敗")
 
-    if members is None:
-        raise Exception("Membersが取得できません。")
+    members = int(m.group(1).replace(",", ""))
 
-    return (
-        float(score.group(1)),
-        int(members.group(1).replace(",", ""))
-    )
+    return score, members
 
 
 def save(score, members):
+
+    CSV.parent.mkdir(exist_ok=True)
 
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -53,12 +65,12 @@ def save(score, members):
         "members": members
     }])
 
-    if CSV_FILE.exists():
+    if CSV.exists():
 
-        df = pd.read_csv(CSV_FILE)
+        df = pd.read_csv(CSV)
 
         if today in df["date"].values:
-            print("今日は既に取得済みです。")
+            print("今日のデータは保存済み")
             return
 
         df = pd.concat([df, row], ignore_index=True)
@@ -67,14 +79,15 @@ def save(score, members):
 
         df = row
 
-    df.to_csv(CSV_FILE, index=False)
+    df.to_csv(CSV, index=False)
 
-    print("保存完了")
     print(df.tail())
 
 
 if __name__ == "__main__":
 
     score, members = fetch()
+
+    print(score, members)
 
     save(score, members)
