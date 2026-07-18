@@ -1,4 +1,5 @@
 from playwright.sync_api import sync_playwright
+import re
 
 URL = "https://myanimelist.net/anime/49233/Youjo_Senki_II"
 
@@ -6,19 +7,26 @@ with sync_playwright() as p:
 
     browser = p.chromium.launch(headless=True)
 
-    page = browser.new_page(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/137.0 Safari/537.36"
-    )
+    page = browser.new_page()
 
-    page.goto(URL, wait_until="networkidle", timeout=60000)
+    page.goto(URL, wait_until="networkidle")
 
-    print("Title:")
-    print(page.title())
-
-    print("\nURL:")
-    print(page.url)
-
-    print("\nFirst 500 chars:")
-    print(page.content()[:500])
+    text = page.locator("body").inner_text()
 
     browser.close()
+
+    score = re.search(r"Score\s*([0-9.]+)", text)
+
+    members = re.search(r"Members\s*([\d,]+)", text)
+
+    print("==========")
+
+    if score:
+        print("Score:", score.group(1))
+    else:
+        print("Score not found")
+
+    if members:
+        print("Members:", members.group(1))
+    else:
+        print("Members not found")
