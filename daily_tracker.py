@@ -28,7 +28,7 @@ with sync_playwright() as p:
     score = None
 
 try:
-    score = page.locator('[itemprop="ratingValue"]').inner_text(timeout=5000)
+    score = page.locator(".score-label").inner_text()
 except:
     pass
 
