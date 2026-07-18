@@ -20,8 +20,7 @@ with open("page.html", "w", encoding="utf-8") as f:
 
 print("HTML saved.")
 
-    page.wait_for_timeout(5000)
-
+   
     page.wait_for_selector("body")
 
     text = page.locator("body").inner_text()
