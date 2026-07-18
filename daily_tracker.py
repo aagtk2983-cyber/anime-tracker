@@ -11,8 +11,7 @@ with sync_playwright() as p:
 
     page.goto(URL, wait_until="domcontentloaded", timeout=60000)
 
-    page.wait_for_timeout(5000)
-
+   
 html = page.content()
 
 with open("page.html", "w", encoding="utf-8") as f:
