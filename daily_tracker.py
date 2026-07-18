@@ -1,93 +1,24 @@
-import json
-import re
-from pathlib import Path
-from datetime import datetime
-
-import pandas as pd
-import requests
-from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
 URL = "https://myanimelist.net/anime/49233/Youjo_Senki_II"
 
-CSV = Path("data/history.csv")
+with sync_playwright() as p:
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
+    browser = p.chromium.launch(headless=True)
 
+    page = browser.new_page(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/137.0 Safari/537.36"
+    )
 
-def fetch():
+    page.goto(URL, wait_until="networkidle", timeout=60000)
 
-    r = requests.get(URL, headers=HEADERS, timeout=20)
-    r.raise_for_status()
+    print("Title:")
+    print(page.title())
 
-    soup = BeautifulSoup(r.text, "html.parser")
+    print("\nURL:")
+    print(page.url)
 
-    # JSON-LDを探す
-    for script in soup.find_all("script", type="application/ld+json"):
+    print("\nFirst 500 chars:")
+    print(page.content()[:500])
 
-        try:
-            data = json.loads(script.string)
-
-            if data.get("@type") == "TVSeries":
-
-                score = float(data["aggregateRating"]["ratingValue"])
-
-                break
-
-        except Exception:
-            pass
-
-    else:
-        raise Exception("Score取得失敗")
-
-    text = soup.get_text(" ")
-
-    m = re.search(r"Members\s*([\d,]+)", text)
-
-    if m is None:
-        raise Exception("Members取得失敗")
-
-    members = int(m.group(1).replace(",", ""))
-
-    return score, members
-
-
-def save(score, members):
-
-    CSV.parent.mkdir(exist_ok=True)
-
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    row = pd.DataFrame([{
-        "date": today,
-        "score": score,
-        "members": members
-    }])
-
-    if CSV.exists():
-
-        df = pd.read_csv(CSV)
-
-        if today in df["date"].values:
-            print("今日のデータは保存済み")
-            return
-
-        df = pd.concat([df, row], ignore_index=True)
-
-    else:
-
-        df = row
-
-    df.to_csv(CSV, index=False)
-
-    print(df.tail())
-
-
-if __name__ == "__main__":
-
-    score, members = fetch()
-
-    print(score, members)
-
-    save(score, members)
+    browser.close()
