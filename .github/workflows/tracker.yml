@@ -21,6 +21,8 @@ jobs:
         python-version: "3.12"
 
     - run: pip install -r requirements.txt
+    
+    - run: playwright install --with-deps chromium
 
     - run: python daily_tracker.py
 
