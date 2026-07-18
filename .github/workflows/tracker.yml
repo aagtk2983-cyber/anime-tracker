@@ -26,7 +26,7 @@ jobs:
       - run: python -m playwright install --with-deps chromium
 
       # ★ここが抜けていました
-      - run: python tracker.py
+      - run: python daily_tracker.py
 
       - name: Commit CSV
         run: |
