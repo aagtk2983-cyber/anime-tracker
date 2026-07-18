@@ -25,10 +25,19 @@ with sync_playwright() as p:
 
     print("==========")
 
-    if score:
-        print("Score:", score.group(1))
-    else:
-        print("Score not found")
+    score = None
+
+try:
+    score = page.locator('[itemprop="ratingValue"]').inner_text(timeout=5000)
+except:
+    pass
+
+if score:
+    print("Score:", score)
+else:
+    print("Score not found")
+
+    
 
     if members:
         print("Members:", members.group(1))
