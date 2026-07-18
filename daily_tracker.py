@@ -13,6 +13,15 @@ with sync_playwright() as p:
 
     page.wait_for_timeout(5000)
 
+html = page.content()
+
+with open("page.html", "w", encoding="utf-8") as f:
+    f.write(html)
+
+print("HTML saved.")
+
+    page.wait_for_timeout(5000)
+
     page.wait_for_selector("body")
 
     text = page.locator("body").inner_text()
