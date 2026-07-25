@@ -2,6 +2,9 @@ from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import re
 import sys
+import os
+import csv
+from datetime import date
 
 URL = "https://myanimelist.net/anime/49233/Youjo_Senki_II"
 
@@ -57,3 +60,28 @@ for tag in soup.find_all("span", class_="dark_text"):
 print("==========")
 print("Score:", score if score else "Score not found")
 print("Members:", members if members else "Members not found")
+
+# --- data/history.csv に記録 ---
+# 同じ日付の行がすでにあれば上書き(手動で複数回実行しても重複しない)、
+# なければ追加して日付順に並べ直す。
+DATA_DIR = "data"
+CSV_PATH = os.path.join(DATA_DIR, "history.csv")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+today = date.today().isoformat()
+
+rows = []
+if os.path.exists(CSV_PATH):
+    with open(CSV_PATH, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+rows = [r for r in rows if r["date"] != today]
+rows.append({"date": today, "score": score or "", "members": members or ""})
+rows.sort(key=lambda r: r["date"])
+
+with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(f, fieldnames=["date", "score", "members"])
+    writer.writeheader()
+    writer.writerows(rows)
+
+print(f"Recorded to {CSV_PATH}: date={today}, score={score}, members={members}")
