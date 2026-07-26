@@ -21,18 +21,18 @@ if df.empty:
     raise SystemExit("data/history.csv にデータがありません。先に daily_tracker.py を実行してください。")
 
 df["date"] = pd.to_datetime(df["date"])
-df["score"] = pd.to_numeric(df["score"], errors="coerce")
-df["members"] = pd.to_numeric(
-    df["members"].astype(str).str.replace(",", "", regex=False), errors="coerce"
+df["mal_score"] = pd.to_numeric(df["mal_score"], errors="coerce")
+df["mal_members"] = pd.to_numeric(
+    df["mal_members"].astype(str).str.replace(",", "", regex=False), errors="coerce"
 )
 df = df.sort_values("date")
 
 fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
 
 # --- スコア推移 ---
-axes[0].plot(df["date"], df["score"], marker="o", color="#4C72B0", label="Score")
-if df["score"].notna().any():
-    avg_score = df["score"].mean()
+axes[0].plot(df["date"], df["mal_score"], marker="o", color="#4C72B0", label="Score")
+if df["mal_score"].notna().any():
+    avg_score = df["mal_score"].mean()
     axes[0].axhline(avg_score, color="gray", linestyle="--", linewidth=1,
                      label=f"平均 {avg_score:.2f}")
 axes[0].set_title("幼女戦記II - MALスコア推移")
@@ -41,9 +41,9 @@ axes[0].legend()
 axes[0].grid(alpha=0.3)
 
 # --- メンバー数推移 ---
-axes[1].plot(df["date"], df["members"], marker="o", color="#DD8452", label="Members")
-if df["members"].notna().any():
-    avg_members = df["members"].mean()
+axes[1].plot(df["date"], df["mal_members"], marker="o", color="#DD8452", label="Members")
+if df["mal_members"].notna().any():
+    avg_members = df["mal_members"].mean()
     axes[1].axhline(avg_members, color="gray", linestyle="--", linewidth=1,
                      label=f"平均 {avg_members:,.0f}")
 axes[1].set_title("幼女戦記II - MALメンバー数推移")
