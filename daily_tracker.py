@@ -5,6 +5,9 @@ import sys
 import os
 import csv
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+JST = ZoneInfo("Asia/Tokyo")
 
 MAL_URL = "https://myanimelist.net/anime/49233/Youjo_Senki_II"
 DANIME_URL = "https://animestore.docomo.ne.jp/animestore/ci_pc?workId=29084"
@@ -231,7 +234,7 @@ FIELDNAMES = [
     "x_followers", "abema_views",
 ]
 
-now = datetime.now()
+now = datetime.now(JST)
 today = now.strftime("%Y-%m-%d")
 time_str = now.strftime("%H:%M:%S")
 
