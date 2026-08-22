@@ -14,17 +14,18 @@ ANIME_LIST_PATH = "anime_list.csv"
 CSV_PATH = os.path.join(DATA_DIR, "history.csv")
 
 FIELDNAMES = [
-    "anime_id", "date", "time",
+    "anime_id", "season", "date", "time",
     "mal_score", "mal_members",
     "danime_favorites", "danime_rank",
-    "anikore_score", "anikore_stars",
-    "x_followers", "abema_views",
 ]
+
+DANIME_RANKING_URL = "https://animestore.docomo.ne.jp/animestore/CR/CR00003003"
 
 
 def load_anime_list():
     with open(ANIME_LIST_PATH, encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        rows = list(csv.DictReader(f))
+    return [r for r in rows if (r.get("anime_id") or "").strip()]
 
 
 def fetch_mal(page, anime_id, mal_id, mal_slug):
@@ -33,8 +34,6 @@ def fetch_mal(page, anime_id, mal_id, mal_slug):
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_selector("body")
     html = page.content()
-    with open(os.path.join(DATA_DIR, f"debug_{anime_id}_mal.html"), "w", encoding="utf-8") as f:
-        f.write(html)
 
     soup = BeautifulSoup(html, "html.parser")
     score_tag = soup.find("span", attrs={"itemprop": "ratingValue"})
@@ -58,19 +57,15 @@ def fetch_danime_favorites(page, anime_id, danime_work_id):
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_selector("body")
     html = page.content()
-    with open(os.path.join(DATA_DIR, f"debug_{anime_id}_danime.html"), "w", encoding="utf-8") as f:
-        f.write(html)
 
     text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
     m = re.search(r"気になる登録数[：:]\s*([\d,]+)", text)
     return m.group(1) if m else None
 
 
-DANIME_RANKING_URL = "https://animestore.docomo.ne.jp/animestore/CR/CR00003003"
-
-
-def fetch_danime_daily_rank(page, anime_id, danime_title):
-    """dアニメストア: デイリーランキングでの順位(ベストエフォート・未検証)"""
+def fetch_danime_ranking_text(page):
+    """dアニメストア デイリーランキングページを一度だけ取得してテキスト化する
+    (タイトルが増えても、ランキングページ自体は1回読み込めば済むため)"""
     try:
         page.goto(DANIME_RANKING_URL, wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(3000)
@@ -79,77 +74,25 @@ def fetch_danime_daily_rank(page, anime_id, danime_title):
         return None
 
     html = page.content()
-    with open(os.path.join(DATA_DIR, f"debug_{anime_id}_danime_ranking.html"), "w", encoding="utf-8") as f:
+    with open(os.path.join(DATA_DIR, "debug_danime_ranking.html"), "w", encoding="utf-8") as f:
         f.write(html)
     try:
-        page.screenshot(path=os.path.join(DATA_DIR, f"debug_{anime_id}_danime_ranking.png"), full_page=True)
+        page.screenshot(path=os.path.join(DATA_DIR, "debug_danime_ranking.png"), full_page=True)
     except Exception:
         pass
 
-    text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
-    idx = text.find(danime_title)
+    return BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+
+
+def rank_from_text(ranking_text, danime_title):
+    if not ranking_text:
+        return None
+    idx = ranking_text.find(danime_title)
     if idx == -1:
         return None
-
-    before = text[max(0, idx - 30):idx]
+    before = ranking_text[max(0, idx - 30):idx]
     matches = list(re.finditer(r"(\d{1,3})\s*位", before))
     return matches[-1].group(1) if matches else None
-
-
-def fetch_anikore(page, anime_id, anikore_id):
-    """あにこれ: 総合得点(ベストエフォート・ボット検知の影響で未検証)"""
-    url = f"https://www.anikore.jp/anime/{anikore_id}/"
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_selector("body")
-    except Exception as e:
-        print("あにこれ取得に失敗:", e)
-        return None
-
-    html = page.content()
-    with open(os.path.join(DATA_DIR, f"debug_{anime_id}_anikore.html"), "w", encoding="utf-8") as f:
-        f.write(html)
-
-    soup = BeautifulSoup(html, "html.parser")
-    title_text = soup.title.get_text(strip=True) if soup.title else ""
-    m = re.search(r"【([\d.]+)点】", title_text)
-    return m.group(1) if m else None
-
-
-def fetch_abema(page, anime_id, abema_title_id):
-    """ABEMA: 最新話の視聴数(ベストエフォート・地域制限の影響で未検証)"""
-    if not abema_title_id:
-        return None
-    url = f"https://abema.tv/video/title/{abema_title_id}"
-    try:
-        page.goto(url, wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(3000)
-    except Exception as e:
-        print("ABEMA取得に失敗:", e)
-        return None
-
-    html = page.content()
-    with open(os.path.join(DATA_DIR, f"debug_{anime_id}_abema.html"), "w", encoding="utf-8") as f:
-        f.write(html)
-    try:
-        page.screenshot(path=os.path.join(DATA_DIR, f"debug_{anime_id}_abema.png"), full_page=True)
-    except Exception:
-        pass
-
-    text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
-    episodes = []
-    for ep_match in re.finditer(r"第(\d+)話", text):
-        ep_num = int(ep_match.group(1))
-        window = text[ep_match.end():ep_match.end() + 100]
-        view_match = re.search(r"([\d.]+)\s*万?\s*視聴", window)
-        if view_match:
-            episodes.append((ep_num, view_match.group(1), "万" in window[:view_match.end()]))
-
-    if not episodes:
-        return None
-    episodes.sort(key=lambda x: x[0])
-    latest_ep, views, is_man = episodes[-1]
-    return f"{views}万" if is_man else views
 
 
 anime_list = load_anime_list()
@@ -167,63 +110,50 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page()
 
+    # ランキングページはタイトル数に関わらず1回だけ取得する
+    danime_ranking_text = fetch_danime_ranking_text(page)
+
     for anime in anime_list:
         aid = anime["anime_id"]
-        print(f"===== {aid} ({anime['name']}) =====")
+        mal_id = (anime.get("mal_id") or "").strip()
+        danime_work_id = (anime.get("danime_work_id") or "").strip()
+        danime_title = (anime.get("danime_title") or "").strip()
 
+        if not mal_id:
+            print(f"skip (MAL ID未登録): {aid}")
+            continue
+
+        print(f"===== {aid} ({anime['name']}) =====")
         mal_score = mal_members = None
         danime_favorites = danime_rank = None
-        anikore_score = None
-        abema_views = None
 
         try:
-            mal_score, mal_members = fetch_mal(page, aid, anime["mal_id"], anime["mal_slug"])
+            mal_score, mal_members = fetch_mal(page, aid, mal_id, anime.get("mal_slug", ""))
         except Exception as e:
             print("MAL取得に失敗しました:", e)
 
-        try:
-            danime_favorites = fetch_danime_favorites(page, aid, anime["danime_work_id"])
-        except Exception as e:
-            print("dアニメ(お気に入り)取得に失敗しました:", e)
+        if danime_work_id:
+            try:
+                danime_favorites = fetch_danime_favorites(page, aid, danime_work_id)
+            except Exception as e:
+                print("dアニメ(お気に入り)取得に失敗しました:", e)
 
-        try:
-            danime_rank = fetch_danime_daily_rank(page, aid, anime["danime_title"])
-        except Exception as e:
-            print("dアニメ(ランキング)取得に失敗しました:", e)
-
-        try:
-            anikore_score = fetch_anikore(page, aid, anime["anikore_id"])
-        except Exception as e:
-            print("あにこれ取得に失敗しました:", e)
-
-        try:
-            abema_views = fetch_abema(page, aid, anime.get("abema_title_id"))
-        except Exception as e:
-            print("ABEMA取得に失敗しました:", e)
+        if danime_title:
+            danime_rank = rank_from_text(danime_ranking_text, danime_title)
 
         print("MAL Score:", mal_score, "/ Members:", mal_members)
         print("dアニメ 気になる登録数:", danime_favorites, "/ ランキング:", danime_rank)
-        print("あにこれ 総合得点:", anikore_score)
-        print("ABEMA 最新話視聴数:", abema_views)
-
-        existing_today = next((r for r in rows if r.get("anime_id") == aid and r.get("date") == today), None)
-        manual_carry = {
-            k: (existing_today or {}).get(k, "")
-            for k in ("anikore_stars", "x_followers")
-        }
 
         rows = [r for r in rows if not (r.get("anime_id") == aid and r.get("date") == today)]
         rows.append({
             "anime_id": aid,
+            "season": anime.get("season", ""),
             "date": today,
             "time": time_str,
             "mal_score": mal_score or "",
             "mal_members": mal_members or "",
             "danime_favorites": danime_favorites or "",
             "danime_rank": danime_rank or "",
-            "anikore_score": anikore_score or "",
-            "abema_views": abema_views or "",
-            **manual_carry,
         })
 
         time.sleep(2)  # サイトへの配慮として、タイトルごとに少し間隔を空ける
@@ -238,4 +168,5 @@ with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
     for r in rows:
         writer.writerow({k: r.get(k, "") for k in FIELDNAMES})
 
-print(f"\nRecorded {len(anime_list)} title(s) to {CSV_PATH}: {today} {time_str}")
+n_active = len([a for a in anime_list if a.get("mal_id", "").strip()])
+print(f"\nRecorded {n_active}/{len(anime_list)} title(s) to {CSV_PATH}: {today} {time_str}")
