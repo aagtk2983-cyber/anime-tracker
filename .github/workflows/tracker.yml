@@ -47,6 +47,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/history.csv data/trend_*.png
+          git add data/ trends/
           git diff --cached --quiet && echo "No changes to commit" || git commit -m "Daily Update $(date -u +'%Y-%m-%d')"
           git push
