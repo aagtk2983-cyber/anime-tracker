@@ -2,7 +2,7 @@ name: Daily Anime Tracker
 
 "on":
   schedule:
-    - cron: "0 12 * * *"   # 21:00 JST = 12:00 UTC
+    - cron: "0 15 * * *"   # 21:00 JST = 12:00 UTC
   workflow_dispatch: {}
 
 permissions:
