@@ -8,9 +8,14 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from season_utils import current_mal_season, seasons_elapsed
+
 JST = ZoneInfo("Asia/Tokyo")
 DATA_DIR = "data"
 ANIME_LIST_PATH = "anime_list.csv"
+
+# 1タイトルあたり何シーズン追跡するか(開始シーズン + 次シーズン = 2)
+TRACK_SEASONS = 2
 
 FIELDNAMES = [
     "anime_id", "season", "date", "time",
@@ -143,6 +148,32 @@ anime_list = load_anime_list()
 now = datetime.now(JST)
 today = now.strftime("%Y-%m-%d")
 time_str = now.strftime("%H:%M:%S")
+
+# --- シーズンによる追跡対象の絞り込み ---
+# 各タイトルの season 列は「このシステムで追跡を開始したシーズン」を表す。
+# 開始シーズンから TRACK_SEASONS 分(=開始シーズン自身 + 次シーズン)だけ記録し、
+# それを超えたタイトルは自動的に追跡終了(データは削除せず、記録だけ止める)。
+current_season = current_mal_season(now)
+active_anime_list = []
+ended_anime_list = []
+for a in anime_list:
+    start_season = (a.get("season") or "").strip()
+    if not start_season:
+        # season未設定の行は念のため対象に含める(除外条件が判断できないため)
+        active_anime_list.append(a)
+        continue
+    age = seasons_elapsed(start_season, now)
+    if 0 <= age < TRACK_SEASONS:
+        active_anime_list.append(a)
+    else:
+        ended_anime_list.append(a)
+
+print(f"現在シーズン: {current_season}")
+print(f"追跡対象: {len(active_anime_list)}件 / 追跡終了(対象外): {len(ended_anime_list)}件")
+for a in ended_anime_list:
+    print(f"  終了: {a['anime_id']} (開始シーズン={a.get('season')})")
+
+anime_list = active_anime_list
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
