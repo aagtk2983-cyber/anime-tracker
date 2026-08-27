@@ -1,0 +1,50 @@
+name: New Season Onboarding
+
+# MALのシーズン境界(1/1, 4/1, 7/1, 10/1 JST)の少し後に実行し、
+# その季節の新作アニメを anime_list.csv に追加する。
+# UTC表記: JST 1:00 = UTC 前日16:00
+"on":
+  schedule:
+    - cron: "0 16 31 12 *"  # 1/1 01:00 JST (UTC 12/31 16:00)
+    - cron: "0 16 31 3 *"   # 4/1 01:00 JST (UTC 3/31 16:00)
+    - cron: "0 16 30 6 *"   # 7/1 01:00 JST (UTC 6/30 16:00)
+    - cron: "0 16 30 9 *"   # 10/1 01:00 JST (UTC 9/30 16:00)
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "対象シーズン(例: 2026-fall)。省略時は現在シーズンを自動判定"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  onboard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Add new season's anime
+        run: |
+          if [ -n "${{ github.event.inputs.season }}" ]; then
+            python start_new_season.py --season "${{ github.event.inputs.season }}"
+          else
+            python start_new_season.py
+          fi
+
+      - name: Commit and push updated anime list
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add anime_list.csv
+          git diff --cached --quiet && echo "No changes to commit" || git commit -m "Add new season anime $(date -u +'%Y-%m-%d')"
+          git push
