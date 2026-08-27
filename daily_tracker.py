@@ -68,12 +68,21 @@ def fetch_danime_favorites(page, danime_work_id):
 
 def fetch_danime_ranking_text(page):
     """dアニメストア デイリーランキングページを1回だけ取得してテキスト化する"""
+    # 以前は wait_until="networkidle" を使っていたが、広告等のバックグラウンド通信が
+    # 途切れないため常に60秒でタイムアウトし、一度もランキングを取得できていなかった。
+    # 他の fetch 関数と同様 "domcontentloaded" に変更し、代わりに描画待ちの時間を長めに取る。
     try:
-        page.goto(DANIME_RANKING_URL, wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(3000)
+        page.goto(DANIME_RANKING_URL, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(5000)
     except Exception as e:
-        print("ランキングページの取得に失敗:", e)
-        return None
+        print("ランキングページの取得に失敗(1回目):", e)
+        try:
+            # 一度だけリトライ(一時的なネットワーク遅延対策)
+            page.goto(DANIME_RANKING_URL, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(5000)
+        except Exception as e2:
+            print("ランキングページの取得に失敗(2回目、諦める):", e2)
+            return None
 
     html = page.content()
     os.makedirs(DATA_DIR, exist_ok=True)
