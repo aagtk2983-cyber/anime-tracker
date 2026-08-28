@@ -66,23 +66,118 @@ def fetch_danime_favorites(page, danime_work_id):
     return m.group(1) if m else None
 
 
-def fetch_danime_ranking_text(page):
-    """dアニメストア デイリーランキングページを1回だけ取得してテキスト化する"""
-    # 以前は wait_until="networkidle" を使っていたが、広告等のバックグラウンド通信が
-    # 途切れないため常に60秒でタイムアウトし、一度もランキングを取得できていなかった。
-    # 他の fetch 関数と同様 "domcontentloaded" に変更し、代わりに描画待ちの時間を長めに取る。
+DANIME_RANK_TITLE_RE = re.compile(r"^(\d{1,3})[.\s\u3000\xa0]*(.+)$")
+
+
+def parse_danime_ranking_items(html):
+    """
+    dアニメストア デイリーランキングページのHTMLから、
+    {danime_work_id: {"rank": int, "title": str}} の辞書を作る。
+
+    このページは実際には「N位」ではなく「N.」という表記で、
+    かつ HTML構造が2種類ある:
+      - 1〜3位: <div class="itemModule ranking"> 内に
+                <i class="iconRankN">N.</i> と
+                <span class="ui-clamp webkit2LineClamp">タイトル</span> が別要素
+      - 4位以降: <div class="itemModule list"> 内の
+                <span class="ui-clamp webkit2LineClamp">N. タイトル</span> に
+                順位とタイトルがまとめて入っている
+    「気になる」チェックボックス <input class="favo ui-favo" data-workid="..."> には
+    どちらの構造でも必ず data-workid が入っているため、これはタイトルの表記ゆれに
+    影響されない確実なキーとして主キーに使う(4位以降は外側divにも付くが、
+    1〜3位の外側divには付かないため input 側で統一して取得する)。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    items = {}
+
+    def get_work_id(div):
+        checkbox = div.find("input", class_="favo")
+        if checkbox and checkbox.get("data-workid"):
+            return checkbox.get("data-workid")
+        return div.get("data-workid")
+
+    for div in soup.find_all("div", class_="itemModule ranking"):
+        work_id = get_work_id(div)
+        span = div.find("span", class_="ui-clamp webkit2LineClamp")
+        if not span:
+            continue
+        title = span.get_text(strip=True)
+
+        rank = None
+        icon = div.find("i", class_=re.compile(r"iconRank\d+"))
+        if icon:
+            m = re.match(r"(\d+)", icon.get_text(strip=True))
+            if m:
+                rank = int(m.group(1))
+        if rank is None:
+            m = DANIME_RANK_TITLE_RE.match(title)
+            if m:
+                rank = int(m.group(1))
+                title = m.group(2).strip()
+
+        if work_id and rank is not None:
+            items[work_id] = {"rank": rank, "title": title}
+
+    for div in soup.find_all("div", class_="itemModule list"):
+        work_id = get_work_id(div)
+        span = div.find("span", class_="ui-clamp webkit2LineClamp")
+        if not span:
+            continue
+        m = DANIME_RANK_TITLE_RE.match(span.get_text(strip=True))
+        if not m or not work_id:
+            continue
+        items[work_id] = {"rank": int(m.group(1)), "title": m.group(2).strip()}
+
+    return items
+
+
+def fetch_danime_ranking_items(page, max_ranks=100, max_scrolls=15):
+    """
+    dアニメストア デイリーランキングページを取得する。
+
+    このページは初期表示では上位20件分の要素しかDOMに存在せず、
+    ページ最下部の <div id="loader" class="loader checkOnScreen"> が
+    画面内に入ったタイミングで(IntersectionObserverによる無限スクロール)
+    追加の20件が読み込まれる作りになっている。
+    そのため一度読み込んだだけでは20位より下の順位が一切取得できず、
+    「N位」という表記自体もページ内に存在しない(実際は「N.」表記)ため、
+    以前の実装(get_text→"N位"を正規表現検索)は常に失敗していた。
+
+    ここでは、読み込み済みの件数が増えなくなる/max_ranksに達するまで、
+    ページ下部へのスクロール→少し待機、を繰り返して読み込みを促す。
+    """
     try:
         page.goto(DANIME_RANKING_URL, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(3000)
     except Exception as e:
         print("ランキングページの取得に失敗(1回目):", e)
         try:
             # 一度だけリトライ(一時的なネットワーク遅延対策)
             page.goto(DANIME_RANKING_URL, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(3000)
         except Exception as e2:
             print("ランキングページの取得に失敗(2回目、諦める):", e2)
-            return None
+            return {}
+
+    prev_count = -1
+    for i in range(max_scrolls):
+        html = page.content()
+        items = parse_danime_ranking_items(html)
+        loaded_max_rank = max((v["rank"] for v in items.values()), default=0)
+        print(f"  ランキング読み込み中... {i + 1}回目: {len(items)}件 (最大順位 {loaded_max_rank}位)")
+
+        if loaded_max_rank >= max_ranks:
+            break
+        if len(items) == prev_count:
+            # スクロールしても件数が増えない = もうこれ以上読み込めない
+            break
+        prev_count = len(items)
+
+        try:
+            page.mouse.wheel(0, 4000)
+        except Exception:
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(1500)
 
     html = page.content()
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -93,18 +188,23 @@ def fetch_danime_ranking_text(page):
     except Exception:
         pass
 
-    return BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    return parse_danime_ranking_items(html)
 
 
-def rank_from_text(ranking_text, danime_title):
-    if not ranking_text:
+def rank_from_items(ranking_items, danime_work_id, danime_title):
+    """data-workid での完全一致を優先し、ダメならタイトルの部分一致で探す"""
+    if not ranking_items:
         return None
-    idx = ranking_text.find(danime_title)
-    if idx == -1:
-        return None
-    before = ranking_text[max(0, idx - 30):idx]
-    matches = list(re.finditer(r"(\d{1,3})\s*位", before))
-    return matches[-1].group(1) if matches else None
+
+    if danime_work_id and danime_work_id in ranking_items:
+        return str(ranking_items[danime_work_id]["rank"])
+
+    if danime_title:
+        for info in ranking_items.values():
+            if info["title"] == danime_title or danime_title in info["title"] or info["title"] in danime_title:
+                return str(info["rank"])
+
+    return None
 
 
 def title_csv_path(season, anime_id):
@@ -188,7 +288,8 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page()
 
-    danime_ranking_text = fetch_danime_ranking_text(page)
+    danime_ranking_items = fetch_danime_ranking_items(page)
+    print(f"dアニメ デイリーランキング取得件数: {len(danime_ranking_items)}件")
 
     for anime in anime_list:
         aid = anime["anime_id"]
@@ -216,8 +317,8 @@ with sync_playwright() as p:
             except Exception as e:
                 print("dアニメ(お気に入り)取得に失敗しました:", e)
 
-        if danime_title:
-            danime_rank = rank_from_text(danime_ranking_text, danime_title)
+        if danime_work_id or danime_title:
+            danime_rank = rank_from_items(danime_ranking_items, danime_work_id, danime_title)
 
         print("MAL Score:", mal_score, "/ Members:", mal_members)
         print("dアニメ 気になる登録数:", danime_favorites, "/ ランキング:", danime_rank)
