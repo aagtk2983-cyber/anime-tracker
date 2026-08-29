@@ -23,7 +23,13 @@ FIELDNAMES = [
     "danime_favorites", "danime_rank",
 ]
 
-DANIME_RANKING_URL = "https://animestore.docomo.ne.jp/animestore/CR/CR00003003"
+# 以前は「デイリーランキング: コンプリート視聴されたアニメ」(CR00003003)を使っていたが、
+# これは"最後まで見終えた"作品のランキングのため、放送中の新作はほぼ入らず、
+# danime_rank が常に空欄になる原因になっていた。
+# 「総合ランキング(視聴数ベース)」に切り替える。こちらは見放題内の視聴数を
+# 元にしたランキングで、放送中の新作でも上位に来やすい。
+DANIME_RANKING_URL = "https://animestore.docomo.ne.jp/animestore/CR/CR00000014?ranking_type=views"
+DANIME_RANKING_PERIOD_TAB_TEXT = "デイリー"
 
 
 def load_anime_list():
@@ -131,7 +137,7 @@ def parse_danime_ranking_items(html):
     return items
 
 
-def fetch_danime_ranking_items(page, max_ranks=100, max_scrolls=15):
+def fetch_danime_ranking_items(page, max_ranks=300, max_scrolls=40):
     """
     dアニメストア デイリーランキングページを取得する。
 
@@ -145,6 +151,21 @@ def fetch_danime_ranking_items(page, max_ranks=100, max_scrolls=15):
 
     ここでは、読み込み済みの件数が増えなくなる/max_ranksに達するまで、
     ページ下部へのスクロール→少し待機、を繰り返して読み込みを促す。
+
+    以前は「コンプリート視聴されたアニメ」ランキングを使っていたが、
+    これは視聴し終えた作品のランキングであり、上位は劇場版まどか☆マギカや
+    ちいかわのような定番の人気作・旧作が占め続け、放送中の新作
+    (当システムが追跡する対象)はまだ最後まで見終えたユーザーが少ないため
+    ほぼランクインしなかった。そのため danime_rank が常に空欄になっていた。
+    現在は「総合ランキング(視聴数ベース)」(CR00000014, ranking_type=views)を
+    参照する。こちらは視聴数ベースのため放送中の新作でも上位に来やすい。
+
+    このランキングページは デイリー/ウィークリー/年間/全期間 のタブが
+    JS切り替え(href="javascript:void(0)")になっており、URLだけでは
+    期間を指定できない。デフォルト表示がどのタブになるかはページ側の
+    実装依存で確実ではないため、念のため「デイリー」タブを明示的に
+    クリックしてから読み込みを行う(見つからない/クリックできない場合は
+    デフォルト表示のまま読み込みを続行する)。
     """
     try:
         page.goto(DANIME_RANKING_URL, wait_until="domcontentloaded", timeout=60000)
@@ -158,6 +179,13 @@ def fetch_danime_ranking_items(page, max_ranks=100, max_scrolls=15):
         except Exception as e2:
             print("ランキングページの取得に失敗(2回目、諦める):", e2)
             return {}
+
+    # 「デイリー」タブを明示的に選択する(取れなくても致命的ではないので握りつぶす)
+    try:
+        page.get_by_text(DANIME_RANKING_PERIOD_TAB_TEXT, exact=True).first.click(timeout=5000)
+        page.wait_for_timeout(2000)
+    except Exception as e:
+        print("「デイリー」タブのクリックに失敗(デフォルト表示のまま続行):", e)
 
     prev_count = -1
     for i in range(max_scrolls):
@@ -192,7 +220,19 @@ def fetch_danime_ranking_items(page, max_ranks=100, max_scrolls=15):
 
 
 def rank_from_items(ranking_items, danime_work_id, danime_title):
-    """data-workid での完全一致を優先し、ダメならタイトルの部分一致で探す"""
+    """
+    data-workid での完全一致を優先。
+
+    タイトルでのフォールバックは完全一致のみに限定する。
+    以前は「danime_title in info['title'] または info['title'] in danime_title」
+    という部分一致(前方一致/後方一致)を許していたが、これは
+    「幼女戦記」と「幼女戦記Ⅱ」、「ぐらんぶる」と「『ぐらんぶる』Season 3」のような
+    "同じ作品の別シーズン/別作品" まで一致してしまう欠陥があった
+    (実際に 2026-08-29 の記録で幼女戦記Ⅱ に無関係の「幼女戦記」の順位が
+    誤って記録される事故が発生している)。
+    誤ったランキングを記録するくらいなら記録しない方が安全なため、
+    空白/全角スペースなどの表記ゆれのみ吸収した完全一致に限定する。
+    """
     if not ranking_items:
         return None
 
@@ -200,8 +240,10 @@ def rank_from_items(ranking_items, danime_work_id, danime_title):
         return str(ranking_items[danime_work_id]["rank"])
 
     if danime_title:
+        normalized_target = re.sub(r"[\s\u3000]+", "", danime_title)
         for info in ranking_items.values():
-            if info["title"] == danime_title or danime_title in info["title"] or info["title"] in danime_title:
+            normalized_title = re.sub(r"[\s\u3000]+", "", info["title"])
+            if normalized_title == normalized_target:
                 return str(info["rank"])
 
     return None
