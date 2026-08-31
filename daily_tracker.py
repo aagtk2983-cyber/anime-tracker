@@ -31,6 +31,130 @@ FIELDNAMES = [
 DANIME_RANKING_URL = "https://animestore.docomo.ne.jp/animestore/CR/CR00000014?ranking_type=views"
 DANIME_RANKING_PERIOD_TAB_TEXT = "デイリー"
 
+# --- ABEMA 話数別視聴数 ---
+# ABEMAは全アニメが配信されているわけではないため、まずは対象を明示的に
+# 手動登録する方式にする(anime_id -> ABEMAのシリーズslug)。
+# シリーズslugは https://abema.tv/video/episode/<slug>_p<話数> の <slug> 部分。
+# 例: 幼女戦記Ⅱ 第1話 = https://abema.tv/video/episode/25-46_s2_p1 なので slug="25-46_s2"
+# (幼女戦記は1期・2期でタイトルIDそのものは "25-46" を共有し、"_s2" が2期を表す)
+ABEMA_TARGETS = {
+    "youjosenki2": "25-46_s2",
+}
+ABEMA_FIELDNAMES = ["date", "time", "episode", "view_count"]
+
+
+def abema_view_csv_path(season, anime_id):
+    return os.path.join(DATA_DIR, season, "abema_views", f"{anime_id}.csv")
+
+
+def fetch_abema_episode_numbers(page, series_slug):
+    """
+    ABEMAのタイトルページから、現在配信されている話数の一覧を取得する。
+
+    個々のDOM構造(クラス名など)に依存すると壊れやすいため、
+    ページのHTML全体から "<series_slug>_p<数字>" というエピソードURLの
+    パターンをそのまま正規表現で拾う方式にしている
+    (リンクがどんなタグ・属性で埋め込まれていても拾える)。
+    """
+    title_id = series_slug.split("_s")[0]
+    url = f"https://abema.tv/video/title/{title_id}?s={series_slug}"
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(3000)
+    html = page.content()
+
+    pattern = re.escape(series_slug) + r"_p(\d+)"
+    episode_numbers = sorted({int(n) for n in re.findall(pattern, html)})
+    return episode_numbers
+
+
+def parse_abema_view_count(html):
+    """
+    ABEMAのエピソード視聴ページのHTMLから視聴数(目のアイコンの数字)を取り出す。
+
+    ページの実際のDOM構造をこちらの環境からは確認できていない
+    (ABEMAが地域制限をかけており、日本国内以外からのアクセスが
+    「このサービスはお住まいの地域からはご利用になれません」で
+    弾かれるため)。そのため下記は複数のフォールバックを試すベストエフォート
+    実装になっている。実行後に data/debug_abema_episode.html / .png が
+    毎回上書き保存されるので、うまく取得できていない場合はそれを見て
+    セレクタを調整すること。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    # 1) Next.js等のSSRアプリでよくある、埋め込みJSON(__NEXT_DATA__ など)から探す
+    for script in soup.find_all("script"):
+        script_text = script.string or script.get_text() or ""
+        if not script_text.strip():
+            continue
+        m = re.search(r'"(?:viewCount|playCount|viewingCount)"\s*:\s*(\d+)', script_text)
+        if m:
+            return int(m.group(1))
+
+    # 2) 画面上のテキストに "視聴数" のようなラベルがあればその直後の数字を使う
+    text = soup.get_text(" ", strip=True)
+    m = re.search(r"視聴数[^\d]{0,10}([\d,]+)", text)
+    if m:
+        return int(m.group(1).replace(",", ""))
+
+    # 3) aria-label等に "視聴" を含む要素があれば、その中の数字を使う
+    for el in soup.find_all(attrs={"aria-label": re.compile("視聴")}):
+        m = re.search(r"([\d,]+)", el.get_text(" ", strip=True))
+        if m:
+            return int(m.group(1).replace(",", ""))
+
+    return None
+
+
+def fetch_abema_view_count(page, episode_url, save_debug=False):
+    page.goto(episode_url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(3000)
+    html = page.content()
+
+    if save_debug:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(os.path.join(DATA_DIR, "debug_abema_episode.html"), "w", encoding="utf-8") as f:
+            f.write(html)
+        try:
+            page.screenshot(path=os.path.join(DATA_DIR, "debug_abema_episode.png"), full_page=True)
+        except Exception:
+            pass
+
+    return parse_abema_view_count(html)
+
+
+def write_abema_episode_rows(season, anime_id, date, time_str, episode_views):
+    """
+    1タイトル1ファイル(data/<season>/abema_views/<anime_id>.csv)に、
+    話数ごとの視聴数を縦持ち(long format)で記録する。
+    例えば8話まで配信されていれば、1話〜8話それぞれの行を1本ずつ書く。
+    話数が増えれば、その分の行が新たに追加されていく。
+    同じ日に再実行した場合は、その日×その話数の行を上書き(重複させない)。
+    """
+    path = abema_view_csv_path(season, anime_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    rows = []
+    if os.path.exists(path):
+        with open(path, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+
+    rows = [r for r in rows if r.get("date") != date]
+    for episode, view_count in episode_views.items():
+        rows.append({
+            "date": date,
+            "time": time_str,
+            "episode": episode,
+            "view_count": view_count if view_count is not None else "",
+        })
+    rows.sort(key=lambda r: (r.get("date", ""), int(r.get("episode") or 0)))
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=ABEMA_FIELDNAMES)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    return path
+
 
 def load_anime_list():
     with open(ANIME_LIST_PATH, encoding="utf-8") as f:
@@ -379,6 +503,42 @@ with sync_playwright() as p:
         mirror_into_genres(season, aid, anime.get("genre", ""), title_path)
 
         time.sleep(2)  # サイトへの配慮として、タイトルごとに少し間隔を空ける
+
+    # --- ABEMA 話数別視聴数 ---
+    if ABEMA_TARGETS:
+        print("\n===== ABEMA 話数別視聴数 =====")
+        # season は anime_list.csv 側の値を使う(見つからなければ unknown)
+        season_by_id = {a["anime_id"]: a.get("season", "unknown") for a in anime_list}
+
+        for aid, series_slug in ABEMA_TARGETS.items():
+            season = season_by_id.get(aid, "unknown")
+            print(f"--- {aid} (ABEMA slug={series_slug}) ---")
+            try:
+                episode_numbers = fetch_abema_episode_numbers(page, series_slug)
+            except Exception as e:
+                print("ABEMA話数一覧の取得に失敗しました:", e)
+                continue
+
+            if not episode_numbers:
+                print("配信中の話数が見つかりませんでした(地域制限等でページが取得できていない可能性があります)")
+                continue
+
+            max_episode = max(episode_numbers)
+            print(f"配信中: {max_episode}話まで確認 (検出した話数: {episode_numbers})")
+
+            episode_views = {}
+            for ep in range(1, max_episode + 1):
+                url = f"https://abema.tv/video/episode/{series_slug}_p{ep}"
+                try:
+                    views = fetch_abema_view_count(page, url, save_debug=(ep == max_episode))
+                except Exception as e:
+                    print(f"  {ep}話: 取得失敗 ({e})")
+                    views = None
+                print(f"  {ep}話: 視聴数={views}")
+                episode_views[ep] = views
+                time.sleep(2)  # サイトへの配慮として、話数ごとに少し間隔を空ける
+
+            write_abema_episode_rows(season, aid, today, time_str, episode_views)
 
     browser.close()
 
