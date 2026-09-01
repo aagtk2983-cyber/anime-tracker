@@ -29,7 +29,14 @@ jobs:
       - name: Install Playwright browser
         run: python -m playwright install --with-deps chromium
 
-      - name: Run tracker (登録タイトル全件のMAL・dアニメ情報を取得)
+      - name: Run tracker (登録タイトル全件のMAL・dアニメ・ABEMA情報を取得)
+        env:
+          # ABEMAは日本国外IPから中身が取得できないため、日本国内プロキシを
+          # 使う場合はリポジトリのSecretsに登録して渡す。未設定でも動く
+          # (その場合ABEMA部分は地域制限で失敗しログに出るだけ)。
+          ABEMA_PROXY_SERVER: ${{ secrets.ABEMA_PROXY_SERVER }}
+          ABEMA_PROXY_USERNAME: ${{ secrets.ABEMA_PROXY_USERNAME }}
+          ABEMA_PROXY_PASSWORD: ${{ secrets.ABEMA_PROXY_PASSWORD }}
         run: python daily_tracker.py
 
       - name: Plot trends
