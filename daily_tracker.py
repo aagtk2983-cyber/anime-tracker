@@ -64,6 +64,117 @@ def abema_proxy_config():
     return config
 
 
+# --- Crunchyroll 評価・レビュー数 ---
+# Crunchyrollは逆にABEMAとは地域制限の向きが逆で、日本国内からのアクセスを
+# 制限している(=日本のGitHub Actionsランナーではない海外IPからは
+# 普通にアクセスできる)。そのためプロキシ設定は不要。
+# ただしCrunchyrollはABEMAのような「話数ごとの視聴数」は公開しておらず、
+# 取得できるのは作品ページの★評価とレビュー数(dアニメの気になる数・MALの
+# 会員数と同種の"人気の proxy 指標")。
+# anime_id -> (Crunchyrollのシリーズページ絶対URL)で対象を明示登録する。
+CRUNCHYROLL_TARGETS = {
+    "youjosenki2": "https://www.crunchyroll.com/series/GR9P57W96/saga-of-tanya-the-evil",
+}
+CRUNCHYROLL_FIELDNAMES = ["date", "time", "rating", "review_count"]
+
+
+def crunchyroll_csv_path(season, anime_id):
+    return os.path.join(DATA_DIR, season, "crunchyroll", f"{anime_id}.csv")
+
+
+def parse_crunchyroll_stats(html):
+    """
+    CrunchyrollのシリーズページのHTMLから★評価とレビュー数を取り出す。
+
+    ABEMA同様、実際のDOM構造をこちらの環境から確認できていない
+    (ReactのSPAで、JSが描画した後の中身がPlaywright実行時にどうなるかは
+    実機での確認が必要)ため、複数のフォールバックを試すベストエフォート
+    実装になっている。実行後に data/debug_crunchyroll_title.html / .png が
+    毎回上書き保存されるので、うまく取得できていない場合はそれを見て
+    セレクタを調整すること。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    rating = None
+    review_count = None
+
+    # 1) __NEXT_DATA__ 等、埋め込みJSONに評価情報が入っていないか探す
+    for script in soup.find_all("script"):
+        script_text = script.string or script.get_text() or ""
+        if not script_text.strip():
+            continue
+        if rating is None:
+            m = re.search(r'"(?:average|rating|ratingValue)"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?', script_text)
+            if m:
+                rating = float(m.group(1))
+        if review_count is None:
+            m = re.search(r'"(?:total|reviewCount|ratingCount)"\s*:\s*"?([0-9,]+)"?', script_text)
+            if m:
+                review_count = int(m.group(1).replace(",", ""))
+        if rating is not None and review_count is not None:
+            break
+
+    # 2) JSON-LDのaggregateRatingから探す(schema.org形式で埋め込まれることが多い)
+    if rating is None or review_count is None:
+        for script in soup.find_all("script", type="application/ld+json"):
+            script_text = script.string or script.get_text() or ""
+            m_rating = re.search(r'"ratingValue"\s*:\s*"?([0-9.]+)"?', script_text)
+            m_count = re.search(r'"ratingCount"\s*:\s*"?([0-9,]+)"?', script_text)
+            if rating is None and m_rating:
+                rating = float(m_rating.group(1))
+            if review_count is None and m_count:
+                review_count = int(m_count.group(1).replace(",", ""))
+
+    return rating, review_count
+
+
+def fetch_crunchyroll_stats(page, url, anime_id):
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(3000)
+    html = page.content()
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(os.path.join(DATA_DIR, "debug_crunchyroll_title.html"), "w", encoding="utf-8") as f:
+        f.write(html)
+    try:
+        page.screenshot(path=os.path.join(DATA_DIR, "debug_crunchyroll_title.png"), full_page=True)
+    except Exception:
+        pass
+
+    return parse_crunchyroll_stats(html)
+
+
+def write_crunchyroll_row(season, anime_id, date, time_str, rating, review_count):
+    """
+    1タイトル1ファイル(data/<season>/crunchyroll/<anime_id>.csv)に、
+    実行日ごとの★評価・レビュー数を記録する。同じ日に再実行した場合は
+    その日の行を上書きする(他のCSVと同じ方式)。
+    """
+    path = crunchyroll_csv_path(season, anime_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    rows = []
+    if os.path.exists(path):
+        with open(path, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+
+    rows = [r for r in rows if r.get("date") != date]
+    rows.append({
+        "date": date,
+        "time": time_str,
+        "rating": rating if rating is not None else "",
+        "review_count": review_count if review_count is not None else "",
+    })
+    rows.sort(key=lambda r: r.get("date", ""))
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CRUNCHYROLL_FIELDNAMES)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    return path
+
+
 def abema_view_csv_path(season, anime_id):
     return os.path.join(DATA_DIR, season, "abema_views", f"{anime_id}.csv")
 
@@ -594,6 +705,33 @@ with sync_playwright() as p:
                 write_abema_episode_rows(season, aid, today, time_str, episode_views)
         finally:
             abema_context.close()
+
+    # --- Crunchyroll 評価・レビュー数 ---
+    # Crunchyrollは日本国内からのアクセスを制限しているサイトなので、
+    # 日本国外にあるGitHub Actionsのランナーからは(ABEMAと違って)
+    # プロキシなしでそのままアクセスできる想定。dアニメ/MAL用のpageを
+    # そのまま流用する。
+    if CRUNCHYROLL_TARGETS:
+        print("\n===== Crunchyroll 評価・レビュー数 =====")
+        season_by_id = {a["anime_id"]: a.get("season", "unknown") for a in anime_list}
+
+        for aid, url in CRUNCHYROLL_TARGETS.items():
+            season = season_by_id.get(aid, "unknown")
+            print(f"--- {aid} ({url}) ---")
+            try:
+                rating, review_count = fetch_crunchyroll_stats(page, url, aid)
+            except Exception as e:
+                print("Crunchyroll情報の取得に失敗しました:", e)
+                continue
+
+            print(f"  評価={rating} / レビュー数={review_count}")
+            if rating is None and review_count is None:
+                print("  評価・レビュー数が取れませんでした。"
+                      "data/debug_crunchyroll_title.html を確認してください"
+                      "(要ログイン画面になっている、DOM構造が想定と違う、等の可能性)")
+
+            write_crunchyroll_row(season, aid, today, time_str, rating, review_count)
+            time.sleep(2)  # サイトへの配慮として、タイトルごとに少し間隔を空ける
 
     browser.close()
 
