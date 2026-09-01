@@ -43,6 +43,27 @@ ABEMA_TARGETS = {
 ABEMA_FIELDNAMES = ["date", "time", "episode", "view_count"]
 
 
+# ABEMAは地域制限があり、日本国外のIPからは中身が返ってこない
+# (実際に検証済み: 「このサービスはお住まいの地域からはご利用になれません」)。
+# GitHub Actionsのホスト型ランナーは日本国外にあるため、ABEMA部分だけは
+# 環境変数で日本国内IPのプロキシを指定できるようにしておく。
+# 未設定なら何もせず今までどおり(プロキシなし)で試行する。
+ABEMA_PROXY_SERVER = os.environ.get("ABEMA_PROXY_SERVER", "").strip()
+ABEMA_PROXY_USERNAME = os.environ.get("ABEMA_PROXY_USERNAME", "").strip()
+ABEMA_PROXY_PASSWORD = os.environ.get("ABEMA_PROXY_PASSWORD", "").strip()
+
+
+def abema_proxy_config():
+    if not ABEMA_PROXY_SERVER:
+        return None
+    config = {"server": ABEMA_PROXY_SERVER}
+    if ABEMA_PROXY_USERNAME:
+        config["username"] = ABEMA_PROXY_USERNAME
+    if ABEMA_PROXY_PASSWORD:
+        config["password"] = ABEMA_PROXY_PASSWORD
+    return config
+
+
 def abema_view_csv_path(season, anime_id):
     return os.path.join(DATA_DIR, season, "abema_views", f"{anime_id}.csv")
 
@@ -55,12 +76,27 @@ def fetch_abema_episode_numbers(page, series_slug):
     ページのHTML全体から "<series_slug>_p<数字>" というエピソードURLの
     パターンをそのまま正規表現で拾う方式にしている
     (リンクがどんなタグ・属性で埋め込まれていても拾える)。
+
+    ここで取得できるHTMLは毎回 data/debug_abema_title.html / .png に
+    上書き保存する。ABEMAは地域制限があり、日本国外のIPからアクセスすると
+    「このサービスはお住まいの地域からはご利用になれません」という
+    エラーページが(exceptionを出さずに)普通に200で返ってくるため、
+    話数が1件も見つからない状態が続く場合はまずこのファイルを確認し、
+    地域制限のエラーページになっていないかを見ること。
     """
     title_id = series_slug.split("_s")[0]
     url = f"https://abema.tv/video/title/{title_id}?s={series_slug}"
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(3000)
     html = page.content()
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(os.path.join(DATA_DIR, "debug_abema_title.html"), "w", encoding="utf-8") as f:
+        f.write(html)
+    try:
+        page.screenshot(path=os.path.join(DATA_DIR, "debug_abema_title.png"), full_page=True)
+    except Exception:
+        pass
 
     pattern = re.escape(series_slug) + r"_p(\d+)"
     episode_numbers = sorted({int(n) for n in re.findall(pattern, html)})
@@ -510,35 +546,54 @@ with sync_playwright() as p:
         # season は anime_list.csv 側の値を使う(見つからなければ unknown)
         season_by_id = {a["anime_id"]: a.get("season", "unknown") for a in anime_list}
 
-        for aid, series_slug in ABEMA_TARGETS.items():
-            season = season_by_id.get(aid, "unknown")
-            print(f"--- {aid} (ABEMA slug={series_slug}) ---")
-            try:
-                episode_numbers = fetch_abema_episode_numbers(page, series_slug)
-            except Exception as e:
-                print("ABEMA話数一覧の取得に失敗しました:", e)
-                continue
+        # ABEMAは地域制限があるため、専用のプロキシ設定を使えるように
+        # dアニメ/MAL用のpageとは別のbrowser contextを使う。
+        # ABEMA_PROXY_SERVER が未設定ならプロキシなしの通常contextになる
+        # (=これまでと同じ挙動。地域制限で失敗する可能性が高いが、
+        #  日本国内で手元実行する場合などはこのままで動く)。
+        proxy = abema_proxy_config()
+        if proxy:
+            print(f"ABEMA: プロキシ経由でアクセスします ({proxy['server']})")
+        else:
+            print("ABEMA: プロキシ未設定です。地域制限により取得できない可能性があります"
+                  "(ABEMA_PROXY_SERVER 環境変数で日本国内プロキシを指定できます)")
+        abema_context = browser.new_context(proxy=proxy) if proxy else browser.new_context()
+        abema_page = abema_context.new_page()
 
-            if not episode_numbers:
-                print("配信中の話数が見つかりませんでした(地域制限等でページが取得できていない可能性があります)")
-                continue
-
-            max_episode = max(episode_numbers)
-            print(f"配信中: {max_episode}話まで確認 (検出した話数: {episode_numbers})")
-
-            episode_views = {}
-            for ep in range(1, max_episode + 1):
-                url = f"https://abema.tv/video/episode/{series_slug}_p{ep}"
+        try:
+            for aid, series_slug in ABEMA_TARGETS.items():
+                season = season_by_id.get(aid, "unknown")
+                print(f"--- {aid} (ABEMA slug={series_slug}) ---")
                 try:
-                    views = fetch_abema_view_count(page, url, save_debug=(ep == max_episode))
+                    episode_numbers = fetch_abema_episode_numbers(abema_page, series_slug)
                 except Exception as e:
-                    print(f"  {ep}話: 取得失敗 ({e})")
-                    views = None
-                print(f"  {ep}話: 視聴数={views}")
-                episode_views[ep] = views
-                time.sleep(2)  # サイトへの配慮として、話数ごとに少し間隔を空ける
+                    print("ABEMA話数一覧の取得に失敗しました:", e)
+                    continue
 
-            write_abema_episode_rows(season, aid, today, time_str, episode_views)
+                if not episode_numbers:
+                    print("配信中の話数が見つかりませんでした"
+                          "(地域制限等でページが取得できていない可能性があります。"
+                          "data/debug_abema_title.html を確認してください)")
+                    continue
+
+                max_episode = max(episode_numbers)
+                print(f"配信中: {max_episode}話まで確認 (検出した話数: {episode_numbers})")
+
+                episode_views = {}
+                for ep in range(1, max_episode + 1):
+                    url = f"https://abema.tv/video/episode/{series_slug}_p{ep}"
+                    try:
+                        views = fetch_abema_view_count(abema_page, url, save_debug=(ep == max_episode))
+                    except Exception as e:
+                        print(f"  {ep}話: 取得失敗 ({e})")
+                        views = None
+                    print(f"  {ep}話: 視聴数={views}")
+                    episode_views[ep] = views
+                    time.sleep(2)  # サイトへの配慮として、話数ごとに少し間隔を空ける
+
+                write_abema_episode_rows(season, aid, today, time_str, episode_views)
+        finally:
+            abema_context.close()
 
     browser.close()
 
