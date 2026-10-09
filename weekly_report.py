@@ -38,6 +38,7 @@
 import os
 import csv
 import sys
+import anime_lists
 import time
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -67,9 +68,7 @@ class RateLimitError(Exception):
 
 
 def load_anime_list(season):
-    with open(ANIME_LIST_PATH, encoding="utf-8") as f:
-        rows = [r for r in csv.DictReader(f) if (r.get("anime_id") or "").strip()]
-    return [r for r in rows if r.get("season") == season]
+    return anime_lists.load_all(season)
 
 
 def to_float(value):

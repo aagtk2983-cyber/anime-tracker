@@ -6,6 +6,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib import font_manager
+import anime_lists
 
 DATA_DIR = "data"
 TRENDS_DIR = "trends"
@@ -16,8 +17,7 @@ for name in ["Noto Sans CJK JP", "Noto Sans JP", "IPAexGothic", "IPAGothic"]:
         matplotlib.rcParams["font.family"] = name
         break
 
-with open(ANIME_LIST_PATH, encoding="utf-8") as f:
-    anime_list = [r for r in csv.DictReader(f) if (r.get("anime_id") or "").strip()]
+anime_list = anime_lists.load_all()
 
 
 def title_csv_path(season, anime_id):

@@ -9,10 +9,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from season_utils import current_mal_season, seasons_elapsed
+import anime_lists
 
 JST = ZoneInfo("Asia/Tokyo")
 DATA_DIR = "data"
-ANIME_LIST_PATH = "anime_list.csv"
+ANIME_LIST_PATH = "anime_list.csv"  # 旧パス(未使用): lists/ を使用
 
 # 1タイトルあたり何シーズン追跡するか(開始シーズン + 次シーズン = 2)
 TRACK_SEASONS = 2
@@ -304,9 +305,7 @@ def write_abema_episode_rows(season, anime_id, date, time_str, episode_views):
 
 
 def load_anime_list():
-    with open(ANIME_LIST_PATH, encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    return [r for r in rows if (r.get("anime_id") or "").strip()]
+    return anime_lists.load_all()
 
 
 def fetch_mal(page, mal_id, mal_slug):

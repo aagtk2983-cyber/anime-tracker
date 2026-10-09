@@ -27,6 +27,8 @@ import urllib.error
 import json
 
 from season_utils import current_mal_season
+import os
+import anime_lists
 
 ANIME_LIST_PATH = "anime_list.csv"
 JIKAN_SEASON_URL = "https://api.jikan.moe/v4/seasons/{year}/{season}"
@@ -81,12 +83,12 @@ def fetch_season_anime(year, season_name):
 
 
 def load_anime_list():
-    with open(ANIME_LIST_PATH, encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+    return anime_lists.load_all()
 
 
-def save_anime_list(rows):
-    with open(ANIME_LIST_PATH, "w", newline="", encoding="utf-8") as f:
+def save_anime_list(rows, season_str):
+    os.makedirs(anime_lists.LISTS_DIR, exist_ok=True)
+    with open(anime_lists.season_path(season_str), "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         writer.writeheader()
         writer.writerows(rows)
@@ -154,8 +156,8 @@ def main():
         return
 
     if new_rows:
-        save_anime_list(rows + new_rows)
-        print(f"anime_list.csv に {len(new_rows)}件追加しました。")
+        save_anime_list(anime_lists.load_all(season_str) + new_rows, season_str)
+        print(f"{anime_lists.season_path(season_str)} に {len(new_rows)}件追加しました。")
         print("danime_work_id / danime_title は空欄です。dアニメ側のID一覧と突き合わせて埋めてください。")
     else:
         print("追加対象はありませんでした。")
