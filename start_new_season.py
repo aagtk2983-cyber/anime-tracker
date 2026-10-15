@@ -4,7 +4,7 @@
 
 MAL(MyAnimeList)公式のシーズン新作一覧を、非公式APIの Jikan
 (https://jikan.moe/, 無料・APIキー不要)経由で取得し、
-anime_list.csv に「season = 新シーズン」の行として追加する。
+lists/anime_list_<season>.csv に追加する。
 
 ・すでに mal_id が anime_list.csv に存在する場合はスキップ(重複追加防止)。
 ・danime_work_id / danime_title は空欄のまま追加する。
@@ -121,9 +121,9 @@ def build_new_row(entry, season_str, existing_ids):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="新シーズンの新作をanime_list.csvに追加する")
+    parser = argparse.ArgumentParser(description="新シーズンの新作をシーズン別リストに追加する")
     parser.add_argument("--season", help="例: 2026-fall (省略時は現在シーズンを自動判定)")
-    parser.add_argument("--dry-run", action="store_true", help="csvを書き換えず、追加予定を表示するだけ")
+    parser.add_argument("--dry-run", action="store_true", help="CSVを書き換えず、追加予定を表示するだけ")
     args = parser.parse_args()
 
     season_str = args.season or current_mal_season()

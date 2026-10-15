@@ -4,6 +4,9 @@ name: Daily Anime Tracker
   schedule:
     - cron: "0 12 * * *"   # 21:00 JST = 12:00 UTC
   workflow_dispatch: {}
+  push:
+    paths:
+      - "lists/**"
 
 permissions:
   contents: write

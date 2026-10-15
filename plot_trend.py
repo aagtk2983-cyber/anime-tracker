@@ -1,5 +1,4 @@
 import os
-import csv
 import shutil
 import pandas as pd
 import matplotlib
@@ -32,39 +31,20 @@ def genre_png_path(season, genre, anime_id):
     return os.path.join(TRENDS_DIR, season, "genres", genre, f"{anime_id}.png")
 
 
-def genre_csv_path(season, genre):
+def genre_data_dir(season, genre):
     if season is None:
-        return os.path.join(DATA_DIR, "genres", genre, "all_anime.csv")
-    return os.path.join(DATA_DIR, season, "genres", genre, "all_anime.csv")
+        return os.path.join(DATA_DIR, "genres", genre)
+    return os.path.join(DATA_DIR, season, "genres", genre)
+
+
+def genre_csv_path(season, genre, anime_id):
+    return os.path.join(genre_data_dir(season, genre), f"{anime_id}.csv")
 
 
 def genre_trend_png_path(season, genre):
     if season is None:
         return os.path.join(TRENDS_DIR, "genres", genre, "all_anime.png")
     return os.path.join(TRENDS_DIR, season, "genres", genre, "all_anime.png")
-
-
-def write_genre_csv(season, genre, animes):
-    rows = []
-    for anime in animes:
-        path = os.path.join(DATA_DIR, anime["season"], "genres", genre,
-                            f"{anime['anime_id']}.csv")
-        if not os.path.exists(path):
-            continue
-        with open(path, newline="", encoding="utf-8") as f:
-            rows.extend(csv.DictReader(f))
-
-    if not rows:
-        return None
-
-    rows.sort(key=lambda row: (row["date"], row["anime_id"], row["time"]))
-    out_path = genre_csv_path(season, genre)
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-        writer.writeheader()
-        writer.writerows(rows)
-    return out_path
 
 
 def make_chart(anime):
@@ -119,15 +99,11 @@ def make_chart(anime):
     return out_path
 
 
-def make_genre_chart(season, genre, animes):
-    csv_path = genre_csv_path(season, genre)
-    if not os.path.exists(csv_path):
+def make_collection_chart(season, title, animes, anime_frames, out_path):
+    if not anime_frames:
         return None
 
-    df = pd.read_csv(csv_path)
-    if df.empty:
-        return None
-
+    df = pd.concat(anime_frames, ignore_index=True)
     df["date"] = pd.to_datetime(df["date"])
     df["mal_score"] = pd.to_numeric(df["mal_score"], errors="coerce")
     df["mal_members"] = pd.to_numeric(
@@ -147,9 +123,9 @@ def make_genre_chart(season, genre, animes):
                      linewidth=1, label=name)
 
     scope = season or "全シーズン"
-    axes[0].set_title(f"{scope} / {genre} - MALスコア推移")
+    axes[0].set_title(f"{scope} / {title} - MALスコア推移")
     axes[0].set_ylabel("Score")
-    axes[1].set_title(f"{scope} / {genre} - MALメンバー数推移")
+    axes[1].set_title(f"{scope} / {title} - MALメンバー数推移")
     axes[1].set_ylabel("Members")
     for axis in axes:
         axis.grid(alpha=0.3)
@@ -159,15 +135,50 @@ def make_genre_chart(season, genre, animes):
     fig.subplots_adjust(right=0.76, hspace=0.35)
     fig.autofmt_xdate()
 
-    out_path = genre_trend_png_path(season, genre)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return out_path
 
 
+def make_genre_chart(season, genre, animes):
+    anime_frames = []
+    for anime in animes:
+        path = genre_csv_path(season, genre, anime["anime_id"])
+        if not os.path.exists(path):
+            continue
+        anime_df = pd.read_csv(path)
+        if not anime_df.empty:
+            anime_frames.append(anime_df)
+
+    return make_collection_chart(
+        season, genre, animes, anime_frames, genre_trend_png_path(season, genre)
+    )
+
+
+def make_season_chart(season, animes):
+    anime_frames = []
+    for anime in animes:
+        path = title_csv_path(season, anime["anime_id"])
+        if not os.path.exists(path):
+            continue
+        anime_df = pd.read_csv(path)
+        if not anime_df.empty:
+            anime_frames.append(anime_df)
+
+    out_path = os.path.join(TRENDS_DIR, season, "all_anime", "all_anime.png")
+    return make_collection_chart(season, "全作品", animes, anime_frames, out_path)
+
+
+def remove_legacy_genre_csv(season, genre):
+    path = os.path.join(genre_data_dir(season, genre), "all_anime.csv")
+    if os.path.exists(path):
+        os.remove(path)
+
+
 genres_by_season = {}
 animes_by_genre = {}
+animes_by_season = {}
 for anime in anime_list:
     png_path = make_chart(anime)
     if not png_path:
@@ -176,8 +187,15 @@ for anime in anime_list:
         print(f"Saved chart to {png_path}")
 
     season = anime.get("season", "unknown")
+    animes_by_season.setdefault(season, []).append(anime)
     genres = [g.strip() for g in (anime.get("genre") or "").split(",") if g.strip()]
     for genre in genres:
+        source_data = title_csv_path(season, anime["anime_id"])
+        if os.path.exists(source_data):
+            for scope in (season, None):
+                dest = genre_csv_path(scope, genre, anime["anime_id"])
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copyfile(source_data, dest)
         if png_path:
             dest = genre_png_path(season, genre, anime["anime_id"])
             os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -185,31 +203,28 @@ for anime in anime_list:
         genres_by_season.setdefault((season, genre), []).append(anime)
         animes_by_genre.setdefault(genre, []).append(anime)
 
+for season, animes in sorted(animes_by_season.items()):
+    png_path = make_season_chart(season, animes)
+    if png_path:
+        print(f"Saved season chart to {png_path}")
+
 for (season, genre), animes in sorted(genres_by_season.items()):
-    csv_path = write_genre_csv(season, genre, animes)
-    if not csv_path:
-        print(f"skip: {season} / {genre} の集約データがありません")
-        continue
-    print(f"Saved genre data to {csv_path}")
+    remove_legacy_genre_csv(season, genre)
 
     png_path = make_genre_chart(season, genre, animes)
     if png_path:
         print(f"Saved genre chart to {png_path}")
 
 for genre, animes in sorted(animes_by_genre.items()):
-    csv_path = write_genre_csv(None, genre, animes)
-    if not csv_path:
-        print(f"skip: 全シーズン / {genre} の集約データがありません")
-        continue
-    print(f"Saved all-season genre data to {csv_path}")
+    remove_legacy_genre_csv(None, genre)
 
     for anime in animes:
         season = anime.get("season", "unknown")
-        source = title_png_path(season, anime["anime_id"])
-        if os.path.exists(source):
+        source_chart = title_png_path(season, anime["anime_id"])
+        if os.path.exists(source_chart):
             dest = os.path.join(TRENDS_DIR, "genres", genre, f"{anime['anime_id']}.png")
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            shutil.copyfile(source, dest)
+            shutil.copyfile(source_chart, dest)
 
     png_path = make_genre_chart(None, genre, animes)
     if png_path:

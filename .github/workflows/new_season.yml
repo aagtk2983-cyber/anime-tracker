@@ -1,7 +1,7 @@
 name: New Season Onboarding
 
 # MALのシーズン境界(1/1, 4/1, 7/1, 10/1 JST)の少し後に実行し、
-# その季節の新作アニメを anime_list.csv に追加する。
+# その季節の新作アニメを lists/anime_list_<season>.csv に追加する。
 # UTC表記: JST 1:00 = UTC 前日16:00
 "on":
   schedule:
@@ -33,6 +33,12 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Install Japanese font
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+
+      - name: Install Playwright browser
+        run: python -m playwright install --with-deps chromium
+
       - name: Add new season's anime
         run: |
           if [ -n "${{ github.event.inputs.season }}" ]; then
@@ -41,10 +47,20 @@ jobs:
             python start_new_season.py
           fi
 
-      - name: Commit and push updated anime list
+      - name: Collect anime trends
+        env:
+          ABEMA_PROXY_SERVER: ${{ secrets.ABEMA_PROXY_SERVER }}
+          ABEMA_PROXY_USERNAME: ${{ secrets.ABEMA_PROXY_USERNAME }}
+          ABEMA_PROXY_PASSWORD: ${{ secrets.ABEMA_PROXY_PASSWORD }}
+        run: python daily_tracker.py
+
+      - name: Generate trends
+        run: python plot_trend.py
+
+      - name: Commit and push anime lists, data, and trends
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add anime_list.csv
-          git diff --cached --quiet && echo "No changes to commit" || git commit -m "Add new season anime $(date -u +'%Y-%m-%d')"
+          git add lists/ data/ trends/
+          git diff --cached --quiet && echo "No changes to commit" || git commit -m "Add new season anime and trends $(date -u +'%Y-%m-%d')"
           git push
