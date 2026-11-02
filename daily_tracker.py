@@ -734,5 +734,8 @@ with sync_playwright() as p:
 
     browser.close()
 
-n_active = len([a for a in anime_list if (a.get("mal_id") or "").strip()])
-print(f"\nRecorded {n_active}/{len(anime_list)} title(s): {today} {time_str}")
+    anime_lists.export_data_csvs()
+    print("Aggregated anime data CSVs updated.")
+
+    n_active = len([a for a in anime_list if (a.get("mal_id") or "").strip()])
+    print(f"\nRecorded {n_active}/{len(anime_list)} title(s): {today} {time_str}")

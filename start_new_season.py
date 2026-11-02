@@ -157,8 +157,10 @@ def main():
 
     if new_rows:
         save_anime_list(anime_lists.load_all(season_str) + new_rows, season_str)
+        anime_lists.export_data_csvs()
         print(f"{anime_lists.season_path(season_str)} に {len(new_rows)}件追加しました。")
         print("danime_work_id / danime_title は空欄です。dアニメ側のID一覧と突き合わせて埋めてください。")
+        print("all_anime.csv のまとめファイルを更新しました。")
     else:
         print("追加対象はありませんでした。")
 

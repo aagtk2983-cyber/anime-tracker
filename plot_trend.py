@@ -64,9 +64,13 @@ def make_chart(anime):
     df["mal_members"] = pd.to_numeric(
         df["mal_members"].astype(str).str.replace(",", "", regex=False), errors="coerce"
     )
+    for column in ("danime_favorites", "danime_rank"):
+        if column not in df:
+            df[column] = pd.NA
+        df[column] = pd.to_numeric(df[column], errors="coerce")
     df = df.sort_values("date")
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    fig, axes = plt.subplots(4, 1, figsize=(10, 12), sharex=True)
 
     axes[0].plot(df["date"], df["mal_score"], marker="o", color="#4C72B0", label="Score")
     if df["mal_score"].notna().any():
@@ -88,7 +92,31 @@ def make_chart(anime):
     axes[1].legend()
     axes[1].grid(alpha=0.3)
 
-    axes[1].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+    axes[2].plot(df["date"], df["danime_favorites"], marker="o", color="#55A868",
+                 label="dアニメ 気になる登録数")
+    if df["danime_favorites"].notna().any():
+        avg_favorites = df["danime_favorites"].mean()
+        axes[2].axhline(avg_favorites, color="gray", linestyle="--", linewidth=1,
+                        label=f"平均 {avg_favorites:,.0f}")
+    axes[2].set_title(f"{anime['name']} - dアニメ 気になる登録数推移")
+    axes[2].set_ylabel("Favorites")
+    axes[2].legend()
+    axes[2].grid(alpha=0.3)
+
+    axes[3].plot(df["date"], df["danime_rank"], marker="o", color="#C44E52",
+                 label="dアニメ ランキング")
+    if df["danime_rank"].notna().any():
+        avg_rank = df["danime_rank"].mean()
+        axes[3].axhline(avg_rank, color="gray", linestyle="--", linewidth=1,
+                        label=f"平均 {avg_rank:.1f}")
+    axes[3].set_title(f"{anime['name']} - dアニメ ランキング推移")
+    axes[3].set_ylabel("Rank")
+    if df["danime_rank"].notna().any():
+        axes[3].invert_yaxis()
+    axes[3].legend()
+    axes[3].grid(alpha=0.3)
+
+    axes[3].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
     fig.autofmt_xdate()
     plt.tight_layout()
 
@@ -109,10 +137,14 @@ def make_collection_chart(season, title, animes, anime_frames, out_path):
     df["mal_members"] = pd.to_numeric(
         df["mal_members"].astype(str).str.replace(",", "", regex=False), errors="coerce"
     )
+    for column in ("danime_favorites", "danime_rank"):
+        if column not in df:
+            df[column] = pd.NA
+        df[column] = pd.to_numeric(df[column], errors="coerce")
     anime_names = {anime["anime_id"]: anime["name"] for anime in animes}
     anime_rows = list(df.groupby("anime_id"))
-    fig_height = min(24, max(8, 6 + 0.25 * len(anime_rows)))
-    fig, axes = plt.subplots(2, 1, figsize=(12, fig_height), sharex=True)
+    fig_height = min(36, max(12, 8 + 0.35 * len(anime_rows)))
+    fig, axes = plt.subplots(4, 1, figsize=(12, fig_height), sharex=True)
 
     for anime_id, rows in anime_rows:
         rows = rows.sort_values("date")
@@ -121,18 +153,31 @@ def make_collection_chart(season, title, animes, anime_frames, out_path):
                      linewidth=1, label=name)
         axes[1].plot(rows["date"], rows["mal_members"], marker="o", markersize=2,
                      linewidth=1, label=name)
+        axes[2].plot(rows["date"], rows["danime_favorites"], marker="o", markersize=2,
+                     linewidth=1, label=name)
+        axes[3].plot(rows["date"], rows["danime_rank"], marker="o", markersize=2,
+                     linewidth=1, label=name)
 
     scope = season or "全シーズン"
     axes[0].set_title(f"{scope} / {title} - MALスコア推移")
     axes[0].set_ylabel("Score")
     axes[1].set_title(f"{scope} / {title} - MALメンバー数推移")
     axes[1].set_ylabel("Members")
+    axes[2].set_title(f"{scope} / {title} - dアニメ 気になる登録数推移")
+    axes[2].set_ylabel("Favorites")
+    axes[3].set_title(f"{scope} / {title} - dアニメ ランキング推移")
+    axes[3].set_ylabel("Rank")
+    if df["danime_rank"].notna().any():
+        axes[3].invert_yaxis()
     for axis in axes:
         axis.grid(alpha=0.3)
-        axis.legend(loc="upper left", bbox_to_anchor=(1.01, 1), fontsize="small")
 
-    axes[1].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
-    fig.subplots_adjust(right=0.76, hspace=0.35)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="center left", bbox_to_anchor=(0.77, 0.5),
+               fontsize="small")
+
+    axes[3].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+    fig.subplots_adjust(right=0.75, hspace=0.5)
     fig.autofmt_xdate()
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
