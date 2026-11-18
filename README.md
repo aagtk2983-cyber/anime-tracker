@@ -8,7 +8,10 @@ The matching `trends/<season>/genres/<genre>/all_anime.png` shows each anime's M
 score, MAL member count, dアニメ favorites, and dアニメ ranking trends for that
 genre. The season-wide chart at `trends/<season>/all_anime/all_anime.png` shows
 the same metrics for every anime in that season. Ranking charts put better ranks
-(lower numbers) higher on the axis.
+(lower numbers) higher on the axis. Each metric also shows its latest percentage
+change beside the value chart and a percentage-change graph, measured against that
+metric's first valid observation for each anime. A negative dアニメ ranking change
+means the rank number improved.
 
 For catalog use, the repository also keeps a full season summary CSV at
 `data/<season>/all_anime/all_anime.csv` and a full cross-season CSV at

@@ -11,12 +11,45 @@ DATA_DIR = "data"
 TRENDS_DIR = "trends"
 ANIME_LIST_PATH = "anime_list.csv"
 
+TREND_METRICS = (
+    ("mal_score", "MALスコア", "Score"),
+    ("mal_members", "MALメンバー数", "Members"),
+    ("danime_favorites", "dアニメ 気になる登録数", "Favorites"),
+    ("danime_rank", "dアニメ ランキング", "Rank"),
+)
+
 for name in ["Noto Sans CJK JP", "Noto Sans JP", "IPAexGothic", "IPAGothic"]:
     if any(name.lower() in f.name.lower() for f in font_manager.fontManager.ttflist):
         matplotlib.rcParams["font.family"] = name
         break
 
 anime_list = anime_lists.load_all()
+
+
+def percent_change(values):
+    baseline_values = values.dropna()
+    if baseline_values.empty or baseline_values.iloc[0] == 0:
+        return pd.Series(float("nan"), index=values.index)
+    return (values / baseline_values.iloc[0] - 1) * 100
+
+
+def add_change_rates(df, per_anime=False):
+    """Add percentage change from each metric's first valid observation."""
+    for column, _, _ in TREND_METRICS:
+        if per_anime:
+            df[f"{column}_change_pct"] = df.groupby(
+                "anime_id", sort=False
+            )[column].transform(percent_change)
+        else:
+            df[f"{column}_change_pct"] = percent_change(df[column])
+    return df
+
+
+def latest_change_label(series):
+    changes = series.dropna()
+    if changes.empty:
+        return "開始比 ―"
+    return f"開始比 {changes.iloc[-1]:+.1f}%"
 
 
 def title_csv_path(season, anime_id):
@@ -69,54 +102,44 @@ def make_chart(anime):
             df[column] = pd.NA
         df[column] = pd.to_numeric(df[column], errors="coerce")
     df = df.sort_values("date")
+    add_change_rates(df)
 
-    fig, axes = plt.subplots(4, 1, figsize=(10, 12), sharex=True)
+    colors = ("#4C72B0", "#DD8452", "#55A868", "#C44E52")
+    fig, axes = plt.subplots(8, 1, figsize=(10, 20), sharex=True)
+    for index, (column, label, ylabel) in enumerate(TREND_METRICS):
+        value_axis = axes[index * 2]
+        rate_axis = axes[index * 2 + 1]
+        rate_column = f"{column}_change_pct"
+        values = df[column]
 
-    axes[0].plot(df["date"], df["mal_score"], marker="o", color="#4C72B0", label="Score")
-    if df["mal_score"].notna().any():
-        avg_score = df["mal_score"].mean()
-        axes[0].axhline(avg_score, color="gray", linestyle="--", linewidth=1,
-                         label=f"平均 {avg_score:.2f}")
-    axes[0].set_title(f"{anime['name']}({season} / {anime.get('genre', '')}) - MALスコア推移")
-    axes[0].set_ylabel("Score")
-    axes[0].legend()
-    axes[0].grid(alpha=0.3)
+        value_axis.plot(df["date"], values, marker="o", color=colors[index],
+                        label=ylabel)
+        if values.notna().any():
+            average = values.mean()
+            average_label = (
+                f"平均 {average:.2f}" if column == "mal_score"
+                else f"平均 {average:,.0f}" if column in ("mal_members", "danime_favorites")
+                else f"平均 {average:.1f}"
+            )
+            value_axis.axhline(average, color="gray", linestyle="--", linewidth=1,
+                               label=average_label)
+        value_axis.set_title(
+            f"{anime['name']} - {label}推移 ({latest_change_label(df[rate_column])})"
+        )
+        value_axis.set_ylabel(ylabel)
+        value_axis.legend()
+        value_axis.grid(alpha=0.3)
+        if column == "danime_rank" and values.notna().any():
+            value_axis.invert_yaxis()
 
-    axes[1].plot(df["date"], df["mal_members"], marker="o", color="#DD8452", label="Members")
-    if df["mal_members"].notna().any():
-        avg_members = df["mal_members"].mean()
-        axes[1].axhline(avg_members, color="gray", linestyle="--", linewidth=1,
-                         label=f"平均 {avg_members:,.0f}")
-    axes[1].set_title(f"{anime['name']} - MALメンバー数推移")
-    axes[1].set_ylabel("Members")
-    axes[1].legend()
-    axes[1].grid(alpha=0.3)
+        rate_axis.plot(df["date"], df[rate_column], marker="o", color=colors[index])
+        rate_axis.axhline(0, color="gray", linestyle="--", linewidth=1)
+        rank_note = "・負の値は順位改善" if column == "danime_rank" else ""
+        rate_axis.set_title(f"{label}変化率 (初回取得日比{rank_note})")
+        rate_axis.set_ylabel("%")
+        rate_axis.grid(alpha=0.3)
 
-    axes[2].plot(df["date"], df["danime_favorites"], marker="o", color="#55A868",
-                 label="dアニメ 気になる登録数")
-    if df["danime_favorites"].notna().any():
-        avg_favorites = df["danime_favorites"].mean()
-        axes[2].axhline(avg_favorites, color="gray", linestyle="--", linewidth=1,
-                        label=f"平均 {avg_favorites:,.0f}")
-    axes[2].set_title(f"{anime['name']} - dアニメ 気になる登録数推移")
-    axes[2].set_ylabel("Favorites")
-    axes[2].legend()
-    axes[2].grid(alpha=0.3)
-
-    axes[3].plot(df["date"], df["danime_rank"], marker="o", color="#C44E52",
-                 label="dアニメ ランキング")
-    if df["danime_rank"].notna().any():
-        avg_rank = df["danime_rank"].mean()
-        axes[3].axhline(avg_rank, color="gray", linestyle="--", linewidth=1,
-                        label=f"平均 {avg_rank:.1f}")
-    axes[3].set_title(f"{anime['name']} - dアニメ ランキング推移")
-    axes[3].set_ylabel("Rank")
-    if df["danime_rank"].notna().any():
-        axes[3].invert_yaxis()
-    axes[3].legend()
-    axes[3].grid(alpha=0.3)
-
-    axes[3].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
     fig.autofmt_xdate()
     plt.tight_layout()
 
@@ -141,43 +164,43 @@ def make_collection_chart(season, title, animes, anime_frames, out_path):
         if column not in df:
             df[column] = pd.NA
         df[column] = pd.to_numeric(df[column], errors="coerce")
+    df = df.sort_values(["anime_id", "date"])
+    add_change_rates(df, per_anime=True)
     anime_names = {anime["anime_id"]: anime["name"] for anime in animes}
     anime_rows = list(df.groupby("anime_id"))
-    fig_height = min(36, max(12, 8 + 0.35 * len(anime_rows)))
-    fig, axes = plt.subplots(4, 1, figsize=(12, fig_height), sharex=True)
+    fig_height = min(48, max(18, 12 + 0.5 * len(anime_rows)))
+    fig, axes = plt.subplots(8, 1, figsize=(12, fig_height), sharex=True)
 
-    for anime_id, rows in anime_rows:
-        rows = rows.sort_values("date")
-        name = anime_names.get(anime_id, anime_id)
-        axes[0].plot(rows["date"], rows["mal_score"], marker="o", markersize=2,
-                     linewidth=1, label=name)
-        axes[1].plot(rows["date"], rows["mal_members"], marker="o", markersize=2,
-                     linewidth=1, label=name)
-        axes[2].plot(rows["date"], rows["danime_favorites"], marker="o", markersize=2,
-                     linewidth=1, label=name)
-        axes[3].plot(rows["date"], rows["danime_rank"], marker="o", markersize=2,
-                     linewidth=1, label=name)
-
-    scope = season or "全シーズン"
-    axes[0].set_title(f"{scope} / {title} - MALスコア推移")
-    axes[0].set_ylabel("Score")
-    axes[1].set_title(f"{scope} / {title} - MALメンバー数推移")
-    axes[1].set_ylabel("Members")
-    axes[2].set_title(f"{scope} / {title} - dアニメ 気になる登録数推移")
-    axes[2].set_ylabel("Favorites")
-    axes[3].set_title(f"{scope} / {title} - dアニメ ランキング推移")
-    axes[3].set_ylabel("Rank")
-    if df["danime_rank"].notna().any():
-        axes[3].invert_yaxis()
-    for axis in axes:
-        axis.grid(alpha=0.3)
+    for index, (column, label, ylabel) in enumerate(TREND_METRICS):
+        value_axis = axes[index * 2]
+        rate_axis = axes[index * 2 + 1]
+        for anime_id, rows in anime_rows:
+            name = anime_names.get(anime_id, anime_id)
+            line, = value_axis.plot(
+                rows["date"], rows[column], marker="o", markersize=2,
+                linewidth=1, label=name,
+            )
+            rate_axis.plot(
+                rows["date"], rows[f"{column}_change_pct"], marker="o",
+                markersize=2, linewidth=1, color=line.get_color(),
+            )
+        value_axis.set_title(f"{season or '全シーズン'} / {title} - {label}推移")
+        value_axis.set_ylabel(ylabel)
+        rank_note = "・負の値は順位改善" if column == "danime_rank" else ""
+        rate_axis.set_title(f"{label}変化率 (各作品の初回取得日比{rank_note})")
+        rate_axis.set_ylabel("%")
+        rate_axis.axhline(0, color="gray", linestyle="--", linewidth=1)
+        if column == "danime_rank" and df[column].notna().any():
+            value_axis.invert_yaxis()
+        value_axis.grid(alpha=0.3)
+        rate_axis.grid(alpha=0.3)
 
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="center left", bbox_to_anchor=(0.77, 0.5),
                fontsize="small")
 
-    axes[3].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
-    fig.subplots_adjust(right=0.75, hspace=0.5)
+    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+    fig.subplots_adjust(right=0.75, hspace=0.7)
     fig.autofmt_xdate()
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
