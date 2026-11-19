@@ -116,6 +116,10 @@ def load_weekly_stats(anime, season, as_of):
     score_first, score_last = to_float(first_row.get("mal_score")), to_float(last_row.get("mal_score"))
     members_first, members_last = to_float(first_row.get("mal_members")), to_float(last_row.get("mal_members"))
     rank_first, rank_last = to_float(first_row.get("danime_rank")), to_float(last_row.get("danime_rank"))
+    weekly_rank_first, weekly_rank_last = (
+        to_float(first_row.get("danime_weekly_rank")),
+        to_float(last_row.get("danime_weekly_rank")),
+    )
 
     def delta(a, b):
         return None if a is None or b is None else b - a
@@ -136,6 +140,8 @@ def load_weekly_stats(anime, season, as_of):
         "members_pct": pct(members_first, members_last),
         "rank_first": rank_first,
         "rank_last": rank_last,
+        "weekly_rank_first": weekly_rank_first,
+        "weekly_rank_last": weekly_rank_last,
     }
 
 
@@ -154,13 +160,22 @@ def format_rank_change(rank_first, rank_last):
 
 def format_stats_table(stats_list):
     """Geminiに渡す簡潔なテキスト表(トークン節約のため1作品1行の " | " 区切り)"""
-    lines = ["作品名 | スコア変化 | 会員数増加 | 会員数増加率 | dアニメ順位変化"]
+    lines = [
+        "作品名 | スコア変化 | 会員数増加 | 会員数増加率 | "
+        "dアニメ日次順位変化 | dアニメ週次順位変化"
+    ]
     for s in stats_list:
         score_txt = f"{s['score_delta']:+.2f}" if s["score_delta"] is not None else "―"
         members_txt = f"{s['members_delta']:+,.0f}" if s["members_delta"] is not None else "―"
         pct_txt = f"{s['members_pct']:+.1f}%" if s["members_pct"] is not None else "―"
         rank_txt = format_rank_change(s["rank_first"], s["rank_last"])
-        lines.append(f"{s['name']} | {score_txt} | {members_txt} | {pct_txt} | {rank_txt}")
+        weekly_rank_txt = format_rank_change(
+            s["weekly_rank_first"], s["weekly_rank_last"]
+        )
+        lines.append(
+            f"{s['name']} | {score_txt} | {members_txt} | {pct_txt} | "
+            f"{rank_txt} | {weekly_rank_txt}"
+        )
     return "\n".join(lines)
 
 
@@ -198,7 +213,8 @@ def call_gemini(prompt, max_output_tokens=1500):
 
 OVERALL_PROMPT_TEMPLATE = """あなたはアニメ視聴動向の分析アナリストです。
 以下は {season} シーズンに放送中のアニメについて、直近1週間(過去{days}日間)の
-MyAnimeList(MAL)スコア・会員数増減と、dアニメストアのデイリーランキング順位変化を
+MyAnimeList(MAL)スコア・会員数増減と、dアニメストアのデイリー/ウィークリー
+ランキング順位変化を
 まとめたデータです。値が「―」または「データなし」の項目は取得できなかったことを示します。
 
 # データ(区切り文字は " | ")
@@ -216,7 +232,8 @@ MyAnimeList(MAL)スコア・会員数増減と、dアニメストアのデイリ
 
 GENRE_PROMPT_TEMPLATE = """あなたはアニメ視聴動向の分析アナリストです。
 以下は {season} シーズンの「{genre}」ジャンルの作品について、直近1週間(過去{days}日間)の
-MyAnimeList(MAL)スコア・会員数増減と、dアニメストアのデイリーランキング順位変化を
+MyAnimeList(MAL)スコア・会員数増減と、dアニメストアのデイリー/ウィークリー
+ランキング順位変化を
 まとめたデータです。
 
 # データ(区切り文字は " | ")

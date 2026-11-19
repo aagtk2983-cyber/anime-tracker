@@ -16,6 +16,7 @@ TREND_METRICS = (
     ("mal_members", "MALメンバー数", "Members"),
     ("danime_favorites", "dアニメ 気になる登録数", "Favorites"),
     ("danime_rank", "dアニメ ランキング", "Rank"),
+    ("danime_weekly_rank", "dアニメ ウィークリーランキング", "Weekly Rank"),
 )
 
 for name in ["Noto Sans CJK JP", "Noto Sans JP", "IPAexGothic", "IPAGothic"]:
@@ -97,15 +98,17 @@ def make_chart(anime):
     df["mal_members"] = pd.to_numeric(
         df["mal_members"].astype(str).str.replace(",", "", regex=False), errors="coerce"
     )
-    for column in ("danime_favorites", "danime_rank"):
+    for column in ("danime_favorites", "danime_rank", "danime_weekly_rank"):
         if column not in df:
             df[column] = pd.NA
         df[column] = pd.to_numeric(df[column], errors="coerce")
     df = df.sort_values("date")
     add_change_rates(df)
 
-    colors = ("#4C72B0", "#DD8452", "#55A868", "#C44E52")
-    fig, axes = plt.subplots(8, 1, figsize=(10, 20), sharex=True)
+    colors = ("#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B3")
+    fig, axes = plt.subplots(len(TREND_METRICS) * 2, 1,
+                             figsize=(10, 2.5 * len(TREND_METRICS) * 2),
+                             sharex=True)
     for index, (column, label, ylabel) in enumerate(TREND_METRICS):
         value_axis = axes[index * 2]
         rate_axis = axes[index * 2 + 1]
@@ -129,12 +132,15 @@ def make_chart(anime):
         value_axis.set_ylabel(ylabel)
         value_axis.legend()
         value_axis.grid(alpha=0.3)
-        if column == "danime_rank" and values.notna().any():
+        if column in ("danime_rank", "danime_weekly_rank") and values.notna().any():
             value_axis.invert_yaxis()
 
         rate_axis.plot(df["date"], df[rate_column], marker="o", color=colors[index])
         rate_axis.axhline(0, color="gray", linestyle="--", linewidth=1)
-        rank_note = "・負の値は順位改善" if column == "danime_rank" else ""
+        rank_note = (
+            "・負の値は順位改善"
+            if column in ("danime_rank", "danime_weekly_rank") else ""
+        )
         rate_axis.set_title(f"{label}変化率 (初回取得日比{rank_note})")
         rate_axis.set_ylabel("%")
         rate_axis.grid(alpha=0.3)
@@ -160,7 +166,7 @@ def make_collection_chart(season, title, animes, anime_frames, out_path):
     df["mal_members"] = pd.to_numeric(
         df["mal_members"].astype(str).str.replace(",", "", regex=False), errors="coerce"
     )
-    for column in ("danime_favorites", "danime_rank"):
+    for column in ("danime_favorites", "danime_rank", "danime_weekly_rank"):
         if column not in df:
             df[column] = pd.NA
         df[column] = pd.to_numeric(df[column], errors="coerce")
@@ -169,7 +175,8 @@ def make_collection_chart(season, title, animes, anime_frames, out_path):
     anime_names = {anime["anime_id"]: anime["name"] for anime in animes}
     anime_rows = list(df.groupby("anime_id"))
     fig_height = min(48, max(18, 12 + 0.5 * len(anime_rows)))
-    fig, axes = plt.subplots(8, 1, figsize=(12, fig_height), sharex=True)
+    fig, axes = plt.subplots(len(TREND_METRICS) * 2, 1,
+                             figsize=(12, fig_height), sharex=True)
 
     for index, (column, label, ylabel) in enumerate(TREND_METRICS):
         value_axis = axes[index * 2]
@@ -186,11 +193,14 @@ def make_collection_chart(season, title, animes, anime_frames, out_path):
             )
         value_axis.set_title(f"{season or '全シーズン'} / {title} - {label}推移")
         value_axis.set_ylabel(ylabel)
-        rank_note = "・負の値は順位改善" if column == "danime_rank" else ""
+        rank_note = (
+            "・負の値は順位改善"
+            if column in ("danime_rank", "danime_weekly_rank") else ""
+        )
         rate_axis.set_title(f"{label}変化率 (各作品の初回取得日比{rank_note})")
         rate_axis.set_ylabel("%")
         rate_axis.axhline(0, color="gray", linestyle="--", linewidth=1)
-        if column == "danime_rank" and df[column].notna().any():
+        if column in ("danime_rank", "danime_weekly_rank") and df[column].notna().any():
             value_axis.invert_yaxis()
         value_axis.grid(alpha=0.3)
         rate_axis.grid(alpha=0.3)

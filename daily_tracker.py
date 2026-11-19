@@ -18,11 +18,7 @@ ANIME_LIST_PATH = "anime_list.csv"  # 旧パス(未使用): lists/ を使用
 # 1タイトルあたり何シーズン追跡するか(開始シーズン + 次シーズン = 2)
 TRACK_SEASONS = 2
 
-FIELDNAMES = [
-    "anime_id", "season", "date", "time",
-    "mal_score", "mal_members",
-    "danime_favorites", "danime_rank",
-]
+FIELDNAMES = anime_lists.DATA_FIELDNAMES
 
 # 以前は「デイリーランキング: コンプリート視聴されたアニメ」(CR00003003)を使っていたが、
 # これは"最後まで見終えた"作品のランキングのため、放送中の新作はほぼ入らず、
@@ -30,7 +26,8 @@ FIELDNAMES = [
 # 「総合ランキング(視聴数ベース)」に切り替える。こちらは見放題内の視聴数を
 # 元にしたランキングで、放送中の新作でも上位に来やすい。
 DANIME_RANKING_URL = "https://animestore.docomo.ne.jp/animestore/CR/CR00000014?ranking_type=views"
-DANIME_RANKING_PERIOD_TAB_TEXT = "デイリー"
+DANIME_DAILY_RANKING_TAB_TEXT = "デイリー"
+DANIME_WEEKLY_RANKING_TAB_TEXT = "ウィークリー"
 
 # --- ABEMA 話数別視聴数 ---
 # ABEMAは全アニメが配信されているわけではないため、まずは対象を明示的に
@@ -407,9 +404,12 @@ def parse_danime_ranking_items(html):
     return items
 
 
-def fetch_danime_ranking_items(page, max_ranks=300, max_scrolls=40):
+def fetch_danime_ranking_items(
+    page, period_tab_text=DANIME_DAILY_RANKING_TAB_TEXT,
+    max_ranks=300, max_scrolls=40,
+):
     """
-    dアニメストア デイリーランキングページを取得する。
+    dアニメストアの指定期間ランキングページを取得する。
 
     このページは初期表示では上位20件分の要素しかDOMに存在せず、
     ページ最下部の <div id="loader" class="loader checkOnScreen"> が
@@ -430,12 +430,10 @@ def fetch_danime_ranking_items(page, max_ranks=300, max_scrolls=40):
     現在は「総合ランキング(視聴数ベース)」(CR00000014, ranking_type=views)を
     参照する。こちらは視聴数ベースのため放送中の新作でも上位に来やすい。
 
-    このランキングページは デイリー/ウィークリー/年間/全期間 のタブが
-    JS切り替え(href="javascript:void(0)")になっており、URLだけでは
-    期間を指定できない。デフォルト表示がどのタブになるかはページ側の
-    実装依存で確実ではないため、念のため「デイリー」タブを明示的に
-    クリックしてから読み込みを行う(見つからない/クリックできない場合は
-    デフォルト表示のまま読み込みを続行する)。
+    デフォルト表示がどのタブになるかはページ側の実装依存で確実ではないため、
+    期間タブを明示的にクリックしてから読み込みを行う。クリックできない場合は
+    デイリーは従来どおりデフォルト表示のまま続行し、ウィークリーは誤記録を
+    避けるため取得を中止する。
     """
     try:
         page.goto(DANIME_RANKING_URL, wait_until="domcontentloaded", timeout=60000)
@@ -450,12 +448,15 @@ def fetch_danime_ranking_items(page, max_ranks=300, max_scrolls=40):
             print("ランキングページの取得に失敗(2回目、諦める):", e2)
             return {}
 
-    # 「デイリー」タブを明示的に選択する(取れなくても致命的ではないので握りつぶす)
+    # 期間タブを選択する。週次は選択失敗時にデイリーを誤記録しない。
     try:
-        page.get_by_text(DANIME_RANKING_PERIOD_TAB_TEXT, exact=True).first.click(timeout=5000)
+        page.get_by_text(period_tab_text, exact=True).first.click(timeout=5000)
         page.wait_for_timeout(2000)
     except Exception as e:
-        print("「デイリー」タブのクリックに失敗(デフォルト表示のまま続行):", e)
+        print(f"「{period_tab_text}」タブのクリックに失敗:", e)
+        if period_tab_text == DANIME_WEEKLY_RANKING_TAB_TEXT:
+            return {}
+        print("デフォルト表示のまま続行します")
 
     prev_count = -1
     for i in range(max_scrolls):
@@ -479,12 +480,13 @@ def fetch_danime_ranking_items(page, max_ranks=300, max_scrolls=40):
 
     html = page.content()
     os.makedirs(DATA_DIR, exist_ok=True)
-    with open(os.path.join(DATA_DIR, "debug_danime_ranking.html"), "w", encoding="utf-8") as f:
-        f.write(html)
-    try:
-        page.screenshot(path=os.path.join(DATA_DIR, "debug_danime_ranking.png"), full_page=True)
-    except Exception:
-        pass
+    if period_tab_text == DANIME_DAILY_RANKING_TAB_TEXT:
+        with open(os.path.join(DATA_DIR, "debug_danime_ranking.html"), "w", encoding="utf-8") as f:
+            f.write(html)
+        try:
+            page.screenshot(path=os.path.join(DATA_DIR, "debug_danime_ranking.png"), full_page=True)
+        except Exception:
+            pass
 
     return parse_danime_ranking_items(html)
 
@@ -543,6 +545,7 @@ def write_title_row(season, anime_id, new_row):
     rows = [r for r in rows if r.get("date") != new_row["date"]]
     rows.append(new_row)
     rows.sort(key=lambda r: r.get("date", ""))
+    anime_lists.populate_change_rates(rows)
 
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
@@ -600,8 +603,12 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page()
 
-    danime_ranking_items = fetch_danime_ranking_items(page)
-    print(f"dアニメ デイリーランキング取得件数: {len(danime_ranking_items)}件")
+    danime_daily_ranking_items = fetch_danime_ranking_items(page)
+    print(f"dアニメ デイリーランキング取得件数: {len(danime_daily_ranking_items)}件")
+    danime_weekly_ranking_items = fetch_danime_ranking_items(
+        page, period_tab_text=DANIME_WEEKLY_RANKING_TAB_TEXT
+    )
+    print(f"dアニメ ウィークリーランキング取得件数: {len(danime_weekly_ranking_items)}件")
 
     for anime in anime_list:
         aid = anime["anime_id"]
@@ -616,7 +623,7 @@ with sync_playwright() as p:
 
         print(f"===== {aid} ({anime['name']}) =====")
         mal_score = mal_members = None
-        danime_favorites = danime_rank = None
+        danime_favorites = danime_rank = danime_weekly_rank = None
 
         try:
             mal_score, mal_members = fetch_mal(page, mal_id, anime.get("mal_slug", ""))
@@ -630,10 +637,17 @@ with sync_playwright() as p:
                 print("dアニメ(お気に入り)取得に失敗しました:", e)
 
         if danime_work_id or danime_title:
-            danime_rank = rank_from_items(danime_ranking_items, danime_work_id, danime_title)
+            danime_rank = rank_from_items(
+                danime_daily_ranking_items, danime_work_id, danime_title
+            )
+            danime_weekly_rank = rank_from_items(
+                danime_weekly_ranking_items, danime_work_id, danime_title
+            )
 
         print("MAL Score:", mal_score, "/ Members:", mal_members)
-        print("dアニメ 気になる登録数:", danime_favorites, "/ ランキング:", danime_rank)
+        print("dアニメ 気になる登録数:", danime_favorites,
+              "/ デイリーランキング:", danime_rank,
+              "/ ウィークリーランキング:", danime_weekly_rank)
 
         new_row = {
             "anime_id": aid,
@@ -644,6 +658,7 @@ with sync_playwright() as p:
             "mal_members": mal_members or "",
             "danime_favorites": danime_favorites or "",
             "danime_rank": danime_rank or "",
+            "danime_weekly_rank": danime_weekly_rank or "",
         }
         title_path = write_title_row(season, aid, new_row)
         mirror_into_genres(season, aid, anime.get("genre", ""), title_path)

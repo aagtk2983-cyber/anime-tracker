@@ -8,7 +8,14 @@ import re
 LISTS_DIR = "lists"
 DATA_DIR = "data"
 _PATTERN = re.compile(r"^anime_list_(\d{4})-(winter|spring|summer|fall)\.csv$")
-_DATA_FIELDNAMES = [
+CHANGE_RATE_METRICS = (
+    "mal_score",
+    "mal_members",
+    "danime_favorites",
+    "danime_rank",
+    "danime_weekly_rank",
+)
+DATA_FIELDNAMES = [
     "anime_id",
     "season",
     "date",
@@ -17,7 +24,34 @@ _DATA_FIELDNAMES = [
     "mal_members",
     "danime_favorites",
     "danime_rank",
+    "danime_weekly_rank",
+    *(f"{metric}_change_pct" for metric in CHANGE_RATE_METRICS),
 ]
+
+
+def populate_change_rates(rows):
+    """Set each row's percentage change from the prior valid observation."""
+    previous_values = {}
+    for row in rows:
+        for metric in CHANGE_RATE_METRICS:
+            value = (row.get(metric) or "").replace(",", "").strip()
+            try:
+                current = float(value) if value else None
+            except ValueError:
+                current = None
+
+            rate_field = f"{metric}_change_pct"
+            previous = previous_values.get(metric)
+            row[rate_field] = (
+                f"{(current - previous) / previous * 100:.6f}"
+                if current is not None and previous not in (None, 0)
+                else ""
+            )
+            if current is not None:
+                previous_values[metric] = current
+    return rows
+
+
 def list_files():
     return sorted(p for p in glob.glob(os.path.join(LISTS_DIR, "anime_list_*.csv"))
                   if _PATTERN.match(os.path.basename(p)))
@@ -60,16 +94,19 @@ def _season_data_rows(season):
             continue
         with open(path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            for row in reader:
-                anime_id = (row.get("anime_id") or os.path.splitext(os.path.basename(path))[0]).strip()
-                if not anime_id or anime_id.lower() == "demo":
-                    continue
-                if not (row.get("date") or "").strip():
-                    continue
-                normalized = {field: row.get(field, "") for field in _DATA_FIELDNAMES}
-                normalized["anime_id"] = anime_id
-                normalized["season"] = (row.get("season") or season).strip()
-                rows.append(normalized)
+            file_rows = list(reader)
+        file_rows.sort(key=lambda row: (row.get("date", ""), row.get("time", "")))
+        populate_change_rates(file_rows)
+        for row in file_rows:
+            anime_id = (row.get("anime_id") or os.path.splitext(os.path.basename(path))[0]).strip()
+            if not anime_id or anime_id.lower() == "demo":
+                continue
+            if not (row.get("date") or "").strip():
+                continue
+            normalized = {field: row.get(field, "") for field in DATA_FIELDNAMES}
+            normalized["anime_id"] = anime_id
+            normalized["season"] = (row.get("season") or season).strip()
+            rows.append(normalized)
     rows.sort(key=lambda r: (
         r.get("season") or "",
         r.get("date") or "",
@@ -91,12 +128,12 @@ def export_data_csvs():
         season_name = os.path.basename(season_dir)
         rows = _season_data_rows(season_name)
         season_rows[season_name] = rows
-        _write_csv(os.path.join(season_dir, "all_anime", "all_anime.csv"), _DATA_FIELDNAMES, rows)
+        _write_csv(os.path.join(season_dir, "all_anime", "all_anime.csv"), DATA_FIELDNAMES, rows)
 
     all_rows = []
     for season_name in sorted(season_rows):
         all_rows.extend(season_rows[season_name])
-    _write_csv(os.path.join(DATA_DIR, "all_anime.csv"), _DATA_FIELDNAMES, all_rows)
+    _write_csv(os.path.join(DATA_DIR, "all_anime.csv"), DATA_FIELDNAMES, all_rows)
 
 
 def season_path(season):

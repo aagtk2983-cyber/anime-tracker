@@ -13,6 +13,12 @@ change beside the value chart and a percentage-change graph, measured against th
 metric's first valid observation for each anime. A negative dアニメ ranking change
 means the rank number improved.
 
+The per-anime CSVs also include a daily percentage-change column for each metric,
+including the dアニメ weekly ranking. Each rate compares the value with its prior
+valid observation; it is blank when there is no prior value or that value is zero.
+Negative ranking changes indicate an improvement. The daily tracker records both
+dアニメ daily and weekly rankings.
+
 For catalog use, the repository also keeps a full season summary CSV at
 `data/<season>/all_anime/all_anime.csv` and a full cross-season CSV at
 `data/all_anime.csv`. Each row corresponds to one anime entry in the same format
